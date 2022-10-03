@@ -6,48 +6,48 @@ use crate::state::State;
 
 use super::TreeEdit;
 
-pub struct Drawer<'a>(&'a TreeEdit<'a>);
+pub struct Drawer<'a, 'b>(&'b TreeEdit<'a>);
 
-impl<'a> Drawer<'a> {
-    pub fn new(tree_edit: &'a TreeEdit<'a>) -> Self {
+impl<'a, 'b> Drawer<'a, 'b> {
+    pub fn new(tree_edit: &'b TreeEdit<'a>) -> Self {
         Self(tree_edit)
     }
 }
 
 pub trait DrawerRef<'a> {
     fn render(
-        &'a self,
+        &self,
         area: tui::layout::Rect,
         buf: &mut tui::buffer::Buffer,
         state: (&State, &mut usize),
     );
 }
 
-impl<'a> Widget for Drawer<'a> {
+impl<'a, 'b> Widget for Drawer<'a, 'b> {
     fn render(self, area: tui::layout::Rect, buf: &mut tui::buffer::Buffer) {
         if area.area() == 0 {
             return;
         }
 
-        let tree_edit = self.0;
+        // let tree_edit = self.0;
         let tab_titles = {
-            tree_edit
+            self.0
                 .tabs
                 .iter()
-                .map(|tab| tab.get_name().into())
+                .map(|(tab_name, _)| tab_name.clone().into())
                 .collect::<Vec<Spans<'a>>>()
         };
 
         // buf.set_style(area, tree_edit.state.style);
 
         let block = Block::default()
-            .title(tree_edit.title.clone())
+            .title(self.0.title.clone())
             // .style(tree_edit.state.style)
             // .border_type(tui::widgets::BorderType::Thick)
             .borders(Borders::ALL);
 
         let inner_area = block.inner(area);
-        tui::widgets::Widget::render(block, area, buf);
+        block.render(area, buf);
 
         let chunks = Layout::default()
             .direction(Direction::Vertical)
@@ -56,17 +56,21 @@ impl<'a> Widget for Drawer<'a> {
 
         let tabs = Tabs::new(tab_titles)
             .block(Block::default().borders(Borders::BOTTOM))
-            .style(tree_edit.state.style)
-            .highlight_style(tree_edit.state.highlight_style);
-        let tabs = if let Some(index) = tree_edit.get_index_tab() {
+            .style(self.0.state.style)
+            .highlight_style(if self.0.state.input.is_some() {
+                self.0.state.style
+            } else {
+                self.0.state.highlight_style
+            });
+        let tabs = if let Some(index) = self.0.get_index_tab() {
             tabs.select(index)
         } else {
             tabs
         };
-        tui::widgets::Widget::render(tabs, chunks[0], buf);
+        tabs.render(chunks[0], buf);
 
-        tree_edit
-            .get_tab()
-            .map(|tab| tab.render(chunks[1], buf, (&tree_edit.state, &mut 1)));
+        self.0
+            .get_current_tab()
+            .map(|(_, tab)| tab.render(chunks[1], buf, (&self.0.state, &mut 1)));
     }
 }

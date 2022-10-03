@@ -30,7 +30,7 @@ impl Node {
         }
     }
 
-    fn text(&self) -> &String {
+    pub fn text(&self) -> &String {
         self.tree()
             .or(self.args().and_then(|(text, _)| Some(text)))
             .unwrap()
@@ -84,16 +84,16 @@ impl<'a> From<&Branch<'a>> for Node {
 #[derive(Default, Clone, Debug)]
 pub struct State {
     pub position: Vec<Node>,
-    pub input: bool,
+    pub input: Option<String>,
     pub style: Style,
     pub highlight_style: Style,
 }
 impl State {
-    pub fn index_tab<'a>(&self, tabs: &Vec<Branch<'a>>) -> Option<usize> {
-        tabs.iter().position(|tab| {
+    pub fn index_tab<'a>(&self, tabs: &crate::Branches<'a>) -> Option<usize> {
+        tabs.iter().position(|(tab_name, _)| {
             self.position
                 .get(0)
-                .and_then(|node| node.tree().and_then(|name| Some(*name == tab.get_name())))
+                .and_then(|node| node.tree().and_then(|name| Some(name == tab_name)))
                 .unwrap_or(false)
         })
     }
@@ -102,26 +102,38 @@ impl State {
         self.position.get(level)
     }
 
-    fn current_tab<'a, 'b>(&mut self, tabs: &'b mut Vec<Branch<'a>>) -> Option<&'b mut Branch<'a>> {
-        self.index_tab(tabs).and_then(|index| tabs.get_mut(index))
-    }
-    fn next_tab<'a, 'b>(&self, tabs: &'b Vec<Branch<'a>>) -> Option<&'b Branch<'a>> {
-        self.index_tab(tabs).and_then(|index| tabs.get(index + 1))
-    }
-    fn previous_tab<'a, 'b>(&self, tabs: &'b Vec<Branch<'a>>) -> Option<&'b Branch<'a>> {
+    pub fn current_tab<'a, 'b>(
+        &self,
+        tabs: &'b mut crate::Branches<'a>,
+    ) -> Option<crate::BranchItemMut<'a, 'b>> {
         self.index_tab(tabs)
-            .and_then(|index| tabs.get(if index == 0 { usize::MAX } else { index - 1 }))
+            .and_then(|index| tabs.iter_mut().skip(index).next())
+    }
+    fn next_tab<'a, 'b>(&self, tabs: &'b crate::Branches<'a>) -> Option<crate::BranchItem<'a, 'b>> {
+        tabs.iter()
+            .skip(self.index_tab(tabs).unwrap_or(0) + 1)
+            .next()
+    }
+    fn previous_tab<'a, 'b>(
+        &self,
+        tabs: &'b crate::Branches<'a>,
+    ) -> Option<crate::BranchItem<'a, 'b>> {
+        self.index_tab(tabs).and_then(|index| {
+            tabs.iter()
+                .skip(if index == 0 { usize::MAX } else { index - 1 })
+                .next()
+        })
     }
 
     fn current_branch<'a, 'b>(
-        &mut self,
-        tabs: &'b mut Vec<Branch<'a>>,
+        &self,
+        tabs: &'b mut crate::Branches<'a>,
     ) -> Option<&'b mut Branch<'a>> {
-        self.current_tab(tabs).and_then(|branch| {
+        self.current_tab(tabs).and_then(|(_, branch)| {
             Self::incise_position(branch, self.position.iter().skip(1).rev().skip(1).rev())
         })
     }
-    fn next_item_impl<'a>(&self, iter: impl Iterator<Item = &'a String> + 'a) -> Option<String> {
+    fn next_item_impl<'a>(&self, iter: impl Iterator<Item = &'a String>) -> Option<String> {
         iter.skip_while(|&name| {
             self.position
                 .last()
@@ -131,28 +143,23 @@ impl State {
         .next()
         .map(|text| text.clone())
     }
-    fn next_item<'a, 'b>(&mut self, tabs: &'b mut Vec<Branch<'a>>) -> Option<String> {
+    fn next_item<'a>(&self, tabs: &mut crate::Branches<'a>) -> Option<String> {
         self.current_branch(tabs)
             .and_then(|branch| self.next_item_impl(branch.get_list().iter()))
     }
-    fn previous_item<'a, 'b>(&mut self, tabs: &'b mut Vec<Branch<'a>>) -> Option<String> {
+    fn previous_item<'a>(&self, tabs: &mut crate::Branches<'a>) -> Option<String> {
         self.current_branch(tabs)
             .and_then(|branch| self.next_item_impl(branch.get_list().iter().rev()))
     }
 
     fn current_value<'a, 'b>(
-        &mut self,
-        tabs: &'b mut Vec<Branch<'a>>,
+        &self,
+        tabs: &'b mut crate::Branches<'a>,
     ) -> Option<&'b mut Value<'a>> {
         self.current_branch(tabs)
             .and_then(|branch| branch.args_mut())
             .zip(self.position.last().and_then(|node| node.args()))
-            .and_then(|(args, (name, index))| {
-                args.get_columns()
-                    .get(*index)
-                    .map(|column| (args, name, column.content.to_string()))
-            })
-            .and_then(|(args, name, column)| args.get_value_mut(name, &column))
+            .and_then(|(args, (name, column))| args.get_value_by_cindex_mut(name, *column))
     }
 
     fn incise_position<'a, 'b, 'n>(
@@ -160,25 +167,14 @@ impl State {
         mut nodes: impl Iterator<Item = &'n Node>,
     ) -> Option<&'b mut Branch<'a>> {
         if let Some(node) = nodes.next() {
-            let list = branch.get_list();
             if let Some(branch) = match branch {
                 Branch::Args(args) => args
-                    .get_value_mut(
+                    .get_value_by_cindex_mut(
                         node.text(),
-                        &args
-                            .get_columns()
-                            .get(node.args().map_or(usize::MAX, |(_, index)| *index))
-                            .map_or("".to_string(), |span| span.content.to_string()),
+                        node.args().map_or(usize::MAX, |(_, index)| *index),
                     )
                     .and_then(|value| value.as_struct_mut()),
-                Branch::Tree(tree) => tree
-                    .get_branches_mut()
-                    .get_mut(
-                        list.into_iter()
-                            .position(|name| name == *node.text())
-                            .unwrap_or(0),
-                    )
-                    .map(|branch| branch),
+                Branch::Tree(tree) => tree.get_branches_mut().get_mut(node.text()),
             } {
                 Self::incise_position(branch, nodes)
             } else {
@@ -189,21 +185,21 @@ impl State {
         }
     }
 
-    pub fn transition<'a, 'b>(&mut self, event: crate::Event, tabs: &'b mut Vec<Branch<'a>>) {
-        if self.input {
+    pub fn transition<'a>(&mut self, event: crate::Event, tabs: &mut crate::Branches<'a>) {
+        if self.input.is_some() {
             self.enter_handler(tabs, event)
         } else {
             use crate::Event::*;
             match event {
                 NextTab | PreviousTab => {
                     if event == NextTab {
-                        self.next_tab(tabs).or(tabs.first())
+                        self.next_tab(tabs).or(tabs.front())
                     } else {
-                        self.previous_tab(tabs).or(tabs.last())
+                        self.previous_tab(tabs).or(tabs.back())
                     }
-                    .map(|branch| {
+                    .map(|(name, branch)| {
                         self.position.clear();
-                        self.position.push(Node::Tree(branch.get_name()));
+                        self.position.push(Node::Tree(name.clone()));
                         self.position.push(branch.into())
                     });
                     self.transition(PreviousItem, tabs);
@@ -264,11 +260,9 @@ impl State {
                                 Branch::Tree(tree) => tree
                                     .get_branches()
                                     .into_iter()
-                                    .find_map(|branch| {
+                                    .find_map(|(name, branch)| {
                                         self.position.last().and_then(|node| {
-                                            if branch.get_name() == *node.text()
-                                                && !branch.is_empty()
-                                            {
+                                            if name == node.text() && !branch.is_empty() {
                                                 Some(branch)
                                             } else {
                                                 None
@@ -305,27 +299,57 @@ impl State {
         }
     }
 
-    fn enter_handler<'a>(&mut self, tabs: &mut Vec<Branch<'a>>, event: crate::Event) {
+    fn enter_handler<'a, 'b>(&mut self, tabs: &'b mut crate::Branches<'a>, event: crate::Event) {
         if let Some(value) = self.current_value(tabs) {
+            let mut to_check = false;
+            let check = value.check();
+
             if value.is_bool() {
                 value.as_bool_mut().map(|value| *value = !*value);
             } else if let Some(text) = value.as_text_mut() {
                 use crate::Event::*;
-                if !self.input && event == Enter {
-                    self.input = true;
-                } else if self.input {
+                if self.input.is_none() && event == Enter {
+                    self.input = text.lines().get(0).map(|str| str.clone());
+                    to_check = true;
+                } else if let Some(saved) = &self.input {
                     match event {
                         NextLevel => text.move_cursor(tui_textarea::CursorMove::Forward),
                         PreviousLevel => text.move_cursor(tui_textarea::CursorMove::Back),
-                        Enter => self.input = false,
-                        Cancel => todo!(),
-                        Char(sym) => text.insert_char(sym),
+                        Enter => {
+                            if check {
+                                self.input = None;
+                                text.move_cursor(tui_textarea::CursorMove::End);
+                            }
+                        }
+                        Cancel => {
+                            text.move_cursor(tui_textarea::CursorMove::End);
+                            text.delete_line_by_head();
+                            text.insert_str(saved);
+                            text.move_cursor(tui_textarea::CursorMove::End);
+                            self.input = None;
+                        }
+                        Char(sym) => {
+                            text.insert_char(sym);
+                            to_check = true;
+                        }
                         Backspace => {
                             text.delete_char();
+                            to_check = true;
                         }
                         _ => (),
                     }
                 }
+            }
+
+            if to_check {
+                let res = value.check();
+                value.as_text_mut().map(|text| {
+                    if !res {
+                        text.set_style(Style::default().fg(tui::style::Color::Red));
+                    } else {
+                        text.set_style(Style::default().fg(tui::style::Color::Green));
+                    }
+                });
             }
         }
     }

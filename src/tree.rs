@@ -47,16 +47,24 @@ impl<'a> Branch<'a> {
         }
     }
 
-    pub fn get_name(&self) -> String {
-        match self {
-            Branch::Args(args) => args.get_name(),
-            Branch::Tree(tree) => tree.get_name(),
-        }
-    }
+    // pub fn get_name(&self) -> String {
+    //     match self {
+    //         Branch::Args(args) => args.get_name(),
+    //         Branch::Tree(tree) => tree.get_name(),
+    //     }
+    // }
     pub fn get_list(&self) -> Vec<String> {
         match self {
-            Branch::Args(args) => args.get_names().into_iter().map(|span| span.content.to_string()).collect(),
-            Branch::Tree(tree) => tree.branches.iter().map(|branch| branch.get_name()).collect(),
+            Branch::Args(args) => args
+                .get_names()
+                .into_iter()
+                .map(|span| span.content.to_string())
+                .collect(),
+            Branch::Tree(tree) => tree
+                .branches
+                .iter()
+                .map(|(name, _)| name.clone())
+                .collect(),
         }
     }
     pub fn is_empty(&self) -> bool {
@@ -87,41 +95,21 @@ impl<'a> From<Args<'a>> for Branch<'a> {
     }
 }
 
-#[derive(Clone)]
+#[derive(Default, Clone)]
 pub struct Tree<'a> {
-    name: String,
-    branches: Vec<Branch<'a>>,
-}
-impl<'a> Default for Tree<'a> {
-    fn default() -> Self {
-        Self {
-            name: "Tree".into(),
-            branches: Default::default(),
-        }
-    }
+    branches: crate::Branches<'a>,
 }
 impl<'a> Tree<'a> {
-    pub fn new<T>(name: T) -> Self
-    where
-        T: Into<String>,
-    {
-        let mut slf = Self::default();
-        slf.name = name.into();
-        slf
-    }
-    pub fn get_name(&self) -> String {
-        self.name.clone()
-    }
 
-    pub fn branch(mut self, branch: impl Into<Branch<'a>>) -> Self {
-        self.branches.push(branch.into());
+    pub fn branch(mut self, branch_name: impl Into<String>, branch: impl Into<Branch<'a>>) -> Self {
+        self.branches.insert(branch_name.into(), branch.into());
         self
     }
 
-    pub fn get_branches(&self) -> Vec<&Branch<'a>> {
-        self.branches.iter().collect()
+    pub fn get_branches(&self) -> &crate::Branches<'a> {
+        &self.branches
     }
-    pub fn get_branches_mut(&mut self) -> &mut Vec< Branch<'a>> {
+    pub fn get_branches_mut(&mut self) -> &mut crate::Branches<'a> {
         &mut self.branches
     }
 }
@@ -138,11 +126,8 @@ impl<'a> DrawerRef<'a> for Tree<'a> {
         let items = {
             self.branches
                 .iter()
-                .map(|branch| match branch {
-                    Branch::Args(args) => args.get_name(),
-                    Branch::Tree(tree) => tree.get_name(),
-                })
-                .collect::<Vec<String>>()
+                .map(|(name, _)| name)
+                .collect::<Vec<&String>>()
         };
         let constrains = vec![
             Constraint::Length(
@@ -158,7 +143,7 @@ impl<'a> DrawerRef<'a> for Tree<'a> {
         let current =
             state.0.node(*state.1).and_then(|current| {
                 current.tree().and_then(|current| {
-                    items.iter().enumerate().find_map(|(number, text)| {
+                    items.iter().enumerate().find_map(|(number, &text)| {
                         if text == current {
                             Some(number)
                         } else {
@@ -171,18 +156,18 @@ impl<'a> DrawerRef<'a> for Tree<'a> {
         let list = List::new(
             items
                 .into_iter()
-                .map(|text| ListItem::new(text))
+                .map(|text| ListItem::new(text.clone()))
                 .collect::<Vec<ListItem<'a>>>(),
         )
         .block(Block::default().borders(Borders::RIGHT))
-        .style(state.0.style)
         .highlight_symbol(if *state.1 + 1 == state.0.position.len() {
             ">>"
         } else {
             "  "
         })
         .repeat_highlight_symbol(true)
-        .highlight_style(if *state.1 + 1 <= state.0.position.len() {
+        .style(state.0.style)
+        .highlight_style(if *state.1 + 1 <= state.0.position.len() && state.0.input.is_none() {
             state.0.highlight_style
         } else {
             state.0.style
@@ -197,8 +182,10 @@ impl<'a> DrawerRef<'a> for Tree<'a> {
         current.map(|index| {
             *state.1 += 1;
             self.branches
-                .get(index)
-                .map(|branch| branch.render(chunks[1], buf, state));
+                .iter()
+                .skip(index)
+                .next()
+                .map(|(_, branch)| branch.render(chunks[1], buf, state));
         });
     }
 }

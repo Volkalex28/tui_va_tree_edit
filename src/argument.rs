@@ -1,6 +1,9 @@
-use std::fmt::{Debug, Display};
+use std::{
+    collections::HashMap,
+    fmt::{Debug, Display},
+    str::FromStr,
+};
 
-use linked_hash_map::LinkedHashMap;
 use tui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
@@ -99,7 +102,6 @@ impl Display for Type {
 
 #[derive(Clone)]
 enum ValueVariant<'a> {
-    // String(Span<'a>),
     Bool(bool),
     TextArea(TextArea<'a>),
     Array(Vec<ValueVariant<'a>>),
@@ -130,6 +132,10 @@ impl<'a> Default for Value<'a> {
     }
 }
 impl<'a> Value<'a> {
+    pub fn get_type(&self) -> &Type {
+        &self.0
+    }
+
     pub fn is_none(&self) -> bool {
         matches!(self.0, Type::None)
     }
@@ -203,41 +209,69 @@ impl<'a> Value<'a> {
         self
     }
 
+    pub fn parse<T: FromStr>(&self) -> Option<T> {
+        self.as_text()
+            .and_then(|text| text.lines().get(0))
+            .and_then(|str| str.parse::<T>().ok())
+    }
+
+    pub fn check(&self) -> bool {
+        if self.as_text().is_some() {
+            match &self.0 {
+                Type::Number(ty) => match ty {
+                    NumberType::U8 => self.parse::<u8>().is_some(),
+                    NumberType::I8 => self.parse::<i8>().is_some(),
+                    NumberType::U16 => self.parse::<u16>().is_some(),
+                    NumberType::I16 => self.parse::<i16>().is_some(),
+                    NumberType::U32 => self.parse::<u32>().is_some(),
+                    NumberType::I32 => self.parse::<i32>().is_some(),
+                    NumberType::U64 => self.parse::<u64>().is_some(),
+                    NumberType::I64 => self.parse::<i64>().is_some(),
+                    NumberType::F32 => self.parse::<f32>().is_some(),
+                    NumberType::F64 => self.parse::<f64>().is_some(),
+                    NumberType::Usize => self.parse::<usize>().is_some(),
+                    NumberType::Isize => self.parse::<isize>().is_some(),
+                },
+                Type::String(_) => self.parse::<String>().is_some(),
+                _ => true,
+            }
+        } else {
+            true
+        }
+    }
+
     fn setup(mut self) -> Self {
         if let ValueVariant::TextArea(text) = &mut self.1 {
-            text.set_max_histories(0);
+            text.set_max_histories(1);
             text.move_cursor(tui_textarea::CursorMove::End)
         }
         self
     }
 }
 
-#[derive(Clone)]
+#[derive(Default, Clone)]
 pub struct Args<'a> {
-    name: String,
-    names: LinkedHashMap<String, Vec<usize>>,
-    columns: LinkedHashMap<String, Vec<usize>>,
-    values: Vec<Value<'a>>,
+    // name: String,
+    names: Vec<String>,
+    columns: Vec<String>,
+    values: HashMap<(usize, usize), Value<'a>>,
 }
 impl<'a> Args<'a> {
-    pub fn new<S: Into<String>>(name: S) -> Self {
-        Self {
-            name: name.into(),
-            names: Default::default(),
-            columns: Default::default(),
-            values: Vec::default(),
-        }
-    }
+    // pub fn new<S: Into<String>>(name: S) -> Self {
+    //     Self {
+    //         // name: name.into(),
+    //         names: Default::default(),
+    //         columns: Default::default(),
+    //         values: Default::default(),
+    //     }
+    // }
 
     pub fn names<T>(mut self, names: T) -> Self
     where
         T: IntoIterator,
         T::Item: Into<String>,
     {
-        self.names = names
-            .into_iter()
-            .map(|name| (name.into(), Vec::default()))
-            .collect();
+        self.names = names.into_iter().map(|name| name.into()).collect();
         self
     }
     pub fn columns<T>(mut self, columns: T) -> Self
@@ -245,106 +279,88 @@ impl<'a> Args<'a> {
         T: IntoIterator,
         T::Item: Into<String>,
     {
-        self.columns = columns
-            .into_iter()
-            .map(|column| (column.into(), Vec::default()))
-            .collect();
+        self.columns = columns.into_iter().map(|column| column.into()).collect();
         self
     }
-    pub fn value<T: Into<String>, V: Into<Value<'a>>>(
+    pub fn value<N: Into<String>, C: Into<String>, V: Into<Value<'a>>>(
         mut self,
-        name: T,
-        column: T,
+        name: N,
+        column: C,
         value: V,
     ) -> Self {
-        let insert = |name: String, map: &mut LinkedHashMap<String, Vec<usize>>| {
-            if let Some(vec) =
-                map.iter_mut().find_map(
-                    |(inner_name, vec)| {
-                        if &name == inner_name {
-                            Some(vec)
-                        } else {
-                            None
-                        }
-                    },
-                )
-            {
-                vec.push(self.values.len())
-            } else {
-                map.insert(name, vec![self.values.len()]);
-            }
-        };
-        insert(name.into(), &mut self.names);
-        insert(column.into(), &mut self.columns);
-        self.values.push(value.into());
+        self.positions(&name.into(), &column.into())
+            .map(|indexes| self.values.insert(indexes, value.into()));
         self
     }
 
-    pub fn get_name(&self) -> String {
-        self.name.clone()
+    pub fn get_names_raw(&self) -> &Vec<String> {
+        &self.names
     }
-
     pub fn get_names(&self) -> Vec<Span<'a>> {
-        self.names
-            .iter()
-            .map(|(name, _)| name.clone().into())
-            .collect()
+        self.names.iter().map(|name| name.clone().into()).collect()
+    }
+    pub fn get_columns_raw(&self) -> &Vec<String> {
+        &self.columns
     }
     pub fn get_columns(&self) -> Vec<Span<'a>> {
-        self.columns
-            .iter()
-            .map(|(name, _)| name.clone().into())
-            .collect()
+        self.columns.iter().map(|col| col.clone().into()).collect()
     }
-    pub fn get_value<T: Into<String>>(&self, name: T, column: T) -> Option<&Value<'a>> {
-        if let Some(names) = self.names.get(&name.into()) {
-            if let Some(columns) = self.columns.get(&column.into()) {
-                return names
-                    .iter()
-                    .find(|&index| columns.contains(index))
-                    .map_or(None, |&index| self.values.get(index));
-            }
-        }
-        None
+    pub fn get_value<N: Into<String>, C: Into<String>>(
+        &self,
+        name: N,
+        column: C,
+    ) -> Option<&Value<'a>> {
+        self.positions(&name.into(), &column.into())
+            .and_then(|indexes| self.values.get(&indexes))
     }
-    pub fn get_value_mut<T: Into<String>>(&mut self, name: T, column: T) -> Option<&mut Value<'a>> {
-        if let Some(names) = self.names.get(&name.into()) {
-            if let Some(columns) = self.columns.get(&column.into()) {
-                return names
-                    .iter()
-                    .find(|&index| columns.contains(index))
-                    .map_or(None, |&index| self.values.get_mut(index));
-            }
-        }
-        None
+    pub fn get_value_mut<N: Into<String>, C: Into<String>>(
+        &mut self,
+        name: C,
+        column: N,
+    ) -> Option<&mut Value<'a>> {
+        self.positions(&name.into(), &column.into())
+            .and_then(|indexes| self.values.get_mut(&indexes))
     }
     pub fn get_value_by_indexes(&self, name: usize, column: usize) -> Option<&Value<'a>> {
-        self.names
-            .iter()
-            .skip(name)
-            .next()
-            .map(|(_, names)| names)
-            .zip(
-                self.columns
-                    .iter()
-                    .skip(column)
-                    .next()
-                    .map(|(_, columns)| columns),
-            )
-            .and_then(|(names, columns)| {
-                names
-                    .iter()
-                    .find(|&index| columns.contains(index))
-                    .map_or(None, |&index| self.values.get(index))
-            })
+        self.values.get(&(name, column))
     }
-    pub fn get_value_by_index(&self, index: usize) -> Option<&Value<'a>> {
-        self.values.get(index)
+    pub fn get_value_by_indexes_mut(
+        &mut self,
+        name: usize,
+        column: usize,
+    ) -> Option<&mut Value<'a>> {
+        self.values.get_mut(&(name, column))
+    }
+    pub fn get_value_by_cindex<T: Into<String>>(
+        &self,
+        name: T,
+        column: usize,
+    ) -> Option<&Value<'a>> {
+        Self::position(self.names.iter(), &name.into())
+            .and_then(|index| self.values.get(&(index, column)))
+    }
+    pub fn get_value_by_cindex_mut<T: Into<String>>(
+        &mut self,
+        name: T,
+        column: usize,
+    ) -> Option<&mut Value<'a>> {
+        Self::position(self.names.iter(), &name.into())
+            .and_then(|index| self.values.get_mut(&(index, column)))
+    }
+
+    fn position<C: Iterator>(mut container: C, value: C::Item) -> Option<usize>
+    where
+        C::Item: PartialEq,
+    {
+        container.position(|item| item == value)
+    }
+    fn positions(&self, name: &String, column: &String) -> Option<(usize, usize)> {
+        Self::position(self.names.iter(), name).zip(Self::position(self.columns.iter(), column))
     }
 }
 impl<'a> DrawerRef<'a> for Args<'a> {
     fn render(
-        &'a self,
+        &self,
         area: tui::layout::Rect,
         buf: &mut tui::buffer::Buffer,
         state: (&State, &mut usize),
@@ -354,7 +370,7 @@ impl<'a> DrawerRef<'a> for Args<'a> {
             Paragraph(Paragraph<'b>),
         }
         enum Text<'b> {
-            Text(&'b TextArea<'b>),
+            Text(TextArea<'b>),
             Span(Span<'b>),
         }
 
@@ -365,16 +381,13 @@ impl<'a> DrawerRef<'a> for Args<'a> {
         let current = {
             state.0.node(*state.1).and_then(|current| {
                 current.args().and_then(|(current, col)| {
-                    self.names
-                        .iter()
-                        .enumerate()
-                        .find_map(|(number, (text, _))| {
-                            if *text == *current {
-                                Some((number + 1, col + 1))
-                            } else {
-                                None
-                            }
-                        })
+                    self.names.iter().enumerate().find_map(|(number, text)| {
+                        if *text == *current {
+                            Some((number + 1, col + 1))
+                        } else {
+                            None
+                        }
+                    })
                 })
             })
         };
@@ -382,10 +395,10 @@ impl<'a> DrawerRef<'a> for Args<'a> {
             let values = {
                 self.columns
                     .iter()
-                    .map(|(column, _)| {
+                    .map(|column| {
                         [("".to_string(), Text::Span(Span::from(column.clone())))]
                             .into_iter()
-                            .chain(self.names.iter().map(|(name, _)| {
+                            .chain(self.names.iter().map(|name| {
                                 self.get_value(name, column).map_or(
                                     ("".to_string(), Text::Span(Span::from(""))),
                                     |value| {
@@ -393,7 +406,7 @@ impl<'a> DrawerRef<'a> for Args<'a> {
                                             value.0.to_string(),
                                             match &value.1 {
                                                 ValueVariant::TextArea(text) => {
-                                                    Text::Text::<'a>(text)
+                                                    Text::<'a>::Text(text.clone())
                                                 }
                                                 value => Text::Span(Span::from(value.to_string())),
                                             },
@@ -409,7 +422,7 @@ impl<'a> DrawerRef<'a> for Args<'a> {
             let names = {
                 ["".to_string()]
                     .into_iter()
-                    .chain(self.names.iter().map(|(name, _)| name.clone()))
+                    .chain(self.names.iter().map(|name| name.clone()))
                     .map(|name| ("".to_string(), Text::Span(Span::from(name))))
                     .collect::<Vec<(String, Text<'a>)>>()
             };
@@ -495,7 +508,7 @@ impl<'a> DrawerRef<'a> for Args<'a> {
                                     || (index == 0 && col_index == col
                                         || index == row && col_index == 0)
                                         && *state.1 + 1 == state.0.position.len())
-                                    && !state.0.input
+                                    && state.0.input.is_none()
                                 {
                                     Some(state.0.highlight_style)
                                 } else {
@@ -503,15 +516,17 @@ impl<'a> DrawerRef<'a> for Args<'a> {
                                 }
                             });
                             match span {
-                                Text::Text(text) => {
+                                Text::Text(mut text) => {
                                     let cursor_style = current.and_then(|(row, col)| {
-                                        if row == index && col == col_index && state.0.input {
+                                        if row == index
+                                            && col == col_index
+                                            && state.0.input.is_some()
+                                        {
                                             Some(())
                                         } else {
                                             None
                                         }
                                     });
-                                    let mut text = text.clone();
                                     text.set_block(
                                         Block::default()
                                             .title(block)
@@ -520,10 +535,12 @@ impl<'a> DrawerRef<'a> for Args<'a> {
                                                 Style::default().add_modifier(Modifier::ITALIC),
                                             ),
                                     );
-                                    highlight_style
-                                        .map_or(text.set_style(state.0.style), |style| {
-                                            text.set_style(style)
-                                        });
+                                    if cursor_style.is_none() {
+                                        highlight_style
+                                            .map_or(text.set_style(state.0.style), |style| {
+                                                text.set_style(style)
+                                            });
+                                    }
                                     text.set_cursor_style(if cursor_style.is_none() {
                                         text.style()
                                     } else {
@@ -540,11 +557,15 @@ impl<'a> DrawerRef<'a> for Args<'a> {
                                     let spans = Spans::from(
                                         if let Some(style) = current.and_then(|(row, col)| {
                                             if (/*(row == index && col_index == 0 && !state.0.input)
-                                            ||*/index == 0 && col_index == col && !state.0.input
-                                                || col_index == 0 && index == row && !state.0.input
+                                            ||*/index == 0
+                                                && col_index == col
+                                                && state.0.input.is_none()
+                                                || col_index == 0
+                                                    && index == row
+                                                    && state.0.input.is_none()
                                                 || (row == index
                                                     && col == col_index
-                                                    && state.0.input))
+                                                    && state.0.input.is_some()))
                                                 && *state.1 + 1 == state.0.position.len()
                                             {
                                                 Some(state.0.highlight_style)
@@ -616,24 +637,13 @@ impl<'a> DrawerRef<'a> for Args<'a> {
         };
 
         if let Some(branch) = current.and_then(|(name, col)| {
-            self.names
-                .iter()
-                .skip(name - 1)
-                .next()
-                .and_then(|(name, _)| {
-                    self.columns
-                        .iter()
-                        .skip(col - 1)
-                        .next()
-                        .and_then(|(column, _)| {
-                            self.get_value(name, column).and_then(|value| {
-                                if let ValueVariant::Struct(branch) = &value.1 {
-                                    Some(branch)
-                                } else {
-                                    None
-                                }
-                            })
-                        })
+            self.get_value_by_indexes(name - 1, col - 1)
+                .and_then(|value| {
+                    if let ValueVariant::Struct(branch) = &value.1 {
+                        Some(branch)
+                    } else {
+                        None
+                    }
                 })
         }) {
             *state.1 += 1;
@@ -801,7 +811,7 @@ mod tests {
 
     #[test]
     fn it_works() {
-        let args = Args::new("")
+        let args = Args::default()
             .names(["Name 1", "Name 2"])
             .columns(["Column 1", "Column 2"])
             .value("Name 1", "Column 2", false);

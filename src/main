@@ -1,6 +1,0 @@
-
-mod lib;
-
-fn main() {
-    let tree = lib::TreeEdit::new("TestTreeEdit");
-}
