@@ -47,12 +47,6 @@ impl<'a> Branch<'a> {
         }
     }
 
-    // pub fn get_name(&self) -> String {
-    //     match self {
-    //         Branch::Args(args) => args.get_name(),
-    //         Branch::Tree(tree) => tree.get_name(),
-    //     }
-    // }
     pub fn get_list(&self) -> Vec<String> {
         match self {
             Branch::Args(args) => args

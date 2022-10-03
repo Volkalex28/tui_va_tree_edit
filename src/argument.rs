@@ -251,21 +251,11 @@ impl<'a> Value<'a> {
 
 #[derive(Default, Clone)]
 pub struct Args<'a> {
-    // name: String,
     names: Vec<String>,
     columns: Vec<String>,
     values: HashMap<(usize, usize), Value<'a>>,
 }
 impl<'a> Args<'a> {
-    // pub fn new<S: Into<String>>(name: S) -> Self {
-    //     Self {
-    //         // name: name.into(),
-    //         names: Default::default(),
-    //         columns: Default::default(),
-    //         values: Default::default(),
-    //     }
-    // }
-
     pub fn names<T>(mut self, names: T) -> Self
     where
         T: IntoIterator,
@@ -456,7 +446,6 @@ impl<'a> DrawerRef<'a> for Args<'a> {
 
             let inner_area = {
                 let block = Block::default()
-                    // .border_type(tui::widgets::BorderType::Thick)
                     .style(state.0.style)
                     .borders(Borders::RIGHT);
                 let inner_area = block.inner(chunks[0]);
@@ -577,9 +566,7 @@ impl<'a> DrawerRef<'a> for Args<'a> {
                                         } else if index == 0 || col_index == 0 {
                                             Span::styled(
                                                 span.content,
-                                                // state.0.style.patch(
                                                 Style::default().add_modifier(Modifier::DIM),
-                                                // ),
                                             )
                                         } else {
                                             span
@@ -627,7 +614,6 @@ impl<'a> DrawerRef<'a> for Args<'a> {
                     paragraphes.for_each(|(paragraph, area)| match paragraph {
                         ToRender::Text(text) => {
                             text.widget().render(area, buf);
-                            // buf.set_style(area, style);
                         }
                         ToRender::Paragraph(paragraph) => paragraph.render(area, buf),
                     })

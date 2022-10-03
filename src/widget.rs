@@ -29,7 +29,6 @@ impl<'a, 'b> Widget for Drawer<'a, 'b> {
             return;
         }
 
-        // let tree_edit = self.0;
         let tab_titles = {
             self.0
                 .tabs
@@ -38,12 +37,8 @@ impl<'a, 'b> Widget for Drawer<'a, 'b> {
                 .collect::<Vec<Spans<'a>>>()
         };
 
-        // buf.set_style(area, tree_edit.state.style);
-
         let block = Block::default()
             .title(self.0.title.clone())
-            // .style(tree_edit.state.style)
-            // .border_type(tui::widgets::BorderType::Thick)
             .borders(Borders::ALL);
 
         let inner_area = block.inner(area);
