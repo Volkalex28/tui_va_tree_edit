@@ -338,13 +338,13 @@ impl<'a> Args<'a> {
             .and_then(|index| self.values.get_mut(&(index, column)))
     }
 
-    fn position<C: Iterator>(mut container: C, value: C::Item) -> Option<usize>
+    fn position<C: Iterator, P>(mut container: C, value: P) -> Option<usize>
     where
-        C::Item: PartialEq,
+        C::Item: PartialEq<P>,
     {
         container.position(|item| item == value)
     }
-    fn positions(&self, name: &String, column: &String) -> Option<(usize, usize)> {
+    fn positions(&self, name: &str, column: &str) -> Option<(usize, usize)> {
         Self::position(self.names.iter(), name).zip(Self::position(self.columns.iter(), column))
     }
 }
@@ -412,7 +412,7 @@ impl<'a> DrawerRef<'a> for Args<'a> {
             let names = {
                 ["".to_string()]
                     .into_iter()
-                    .chain(self.names.iter().map(|name| name.clone()))
+                    .chain(self.names.iter().cloned())
                     .map(|name| ("".to_string(), Text::Span(Span::from(name))))
                     .collect::<Vec<(String, Text<'a>)>>()
             };
@@ -525,10 +525,7 @@ impl<'a> DrawerRef<'a> for Args<'a> {
                                             ),
                                     );
                                     if cursor_style.is_none() {
-                                        highlight_style
-                                            .map_or(text.set_style(state.0.style), |style| {
-                                                text.set_style(style)
-                                            });
+                                        text.set_style(highlight_style.unwrap_or(state.0.style));
                                     }
                                     text.set_cursor_style(if cursor_style.is_none() {
                                         text.style()

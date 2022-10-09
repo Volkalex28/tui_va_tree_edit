@@ -64,8 +64,8 @@ impl<'a, 'b> Widget for Drawer<'a, 'b> {
         };
         tabs.render(chunks[0], buf);
 
-        self.0
-            .get_current_tab()
-            .map(|(_, tab)| tab.render(chunks[1], buf, (&self.0.state, &mut 1)));
+        if let Some((_, tab)) = self.0.get_current_tab() {
+            tab.render(chunks[1], buf, (&self.0.state, &mut 1))
+        }
     }
 }

@@ -1,8 +1,8 @@
 pub use argument::Args;
 pub use argument::NumberType;
 pub use argument::StringType;
-pub use argument::Value;
 pub use argument::Type;
+pub use argument::Value;
 use linked_hash_map::LinkedHashMap;
 pub use state::Node;
 pub use tree::Branch;
@@ -67,10 +67,7 @@ impl<'a> TreeEdit<'a> {
         self.state.index_tab(&self.tabs)
     }
     pub fn get_current_tab(&self) -> Option<(&String, &Branch<'a>)> {
-        self.tabs
-            .iter()
-            .skip(self.get_index_tab().unwrap_or(0))
-            .next()
+        self.tabs.iter().nth(self.get_index_tab().unwrap_or(0))
     }
 
     pub fn transition(&mut self, event: Event) {

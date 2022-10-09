@@ -4,7 +4,10 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.62.1"
 authors = ["Volkalex28 <anan20000228@gmail.com>"]
-description = "tui-va-tree-edit is an editor for tree data for tui-rs"
+description = """
+    tui-va-tree-edit is a editor and data display in tree style for tui-rs. 
+    The tree editor can be easily integrated into your TUI application.
+"""
 license = "MIT OR Apache-2.0"
 homepage = "https://github.com/Volkalex28/tui_va_tree_edit#readme"
 repository = "https://github.com/Volkalex28/tui_va_tree_edit"

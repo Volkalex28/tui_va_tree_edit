@@ -32,7 +32,7 @@ impl Node {
 
     pub fn text(&self) -> &String {
         self.tree()
-            .or(self.args().and_then(|(text, _)| Some(text)))
+            .or_else(|| self.args().map(|(text, _)| text))
             .unwrap()
     }
     fn change_text(&mut self, text: String) {
@@ -46,17 +46,16 @@ impl Node {
             *col = max.min(*col + 1);
         }
     }
-    fn dec_index(&mut self) -> Option<()> {
+    fn dec_index(&mut self) -> bool {
         if let Self::Args(_, col) = self {
             if *col == 0 {
-                Some(())
+                return true;
             } else {
                 *col -= 1;
-                None
             }
-        } else {
-            None
         }
+
+        false
     }
 }
 impl<'a> From<&Branch<'a>> for Node {
@@ -93,7 +92,7 @@ impl State {
         tabs.iter().position(|(tab_name, _)| {
             self.position
                 .get(0)
-                .and_then(|node| node.tree().and_then(|name| Some(name == tab_name)))
+                .and_then(|node| node.tree().map(|name| name == tab_name))
                 .unwrap_or(false)
         })
     }
@@ -107,12 +106,10 @@ impl State {
         tabs: &'b mut crate::Branches<'a>,
     ) -> Option<crate::BranchItemMut<'a, 'b>> {
         self.index_tab(tabs)
-            .and_then(|index| tabs.iter_mut().skip(index).next())
+            .and_then(|index| tabs.iter_mut().nth(index))
     }
     fn next_tab<'a, 'b>(&self, tabs: &'b crate::Branches<'a>) -> Option<crate::BranchItem<'a, 'b>> {
-        tabs.iter()
-            .skip(self.index_tab(tabs).unwrap_or(0) + 1)
-            .next()
+        tabs.iter().nth(self.index_tab(tabs).unwrap_or(0) + 1)
     }
     fn previous_tab<'a, 'b>(
         &self,
@@ -120,8 +117,7 @@ impl State {
     ) -> Option<crate::BranchItem<'a, 'b>> {
         self.index_tab(tabs).and_then(|index| {
             tabs.iter()
-                .skip(if index == 0 { usize::MAX } else { index - 1 })
-                .next()
+                .nth(if index == 0 { usize::MAX } else { index - 1 })
         })
     }
 
@@ -139,9 +135,8 @@ impl State {
                 .last()
                 .map_or(true, |node| *name != *node.text())
         })
-        .skip(1)
-        .next()
-        .map(|text| text.clone())
+        .nth(1)
+        .cloned()
     }
     fn next_item<'a>(&self, tabs: &mut crate::Branches<'a>) -> Option<String> {
         self.current_branch(tabs)
@@ -192,16 +187,15 @@ impl State {
             use crate::Event::*;
             match event {
                 NextTab | PreviousTab => {
-                    if event == NextTab {
-                        self.next_tab(tabs).or(tabs.front())
+                    if let Some((name, branch)) = if event == NextTab {
+                        self.next_tab(tabs).or_else(|| tabs.front())
                     } else {
-                        self.previous_tab(tabs).or(tabs.back())
-                    }
-                    .map(|(name, branch)| {
+                        self.previous_tab(tabs).or_else(|| tabs.back())
+                    } {
                         self.position.clear();
                         self.position.push(Node::Tree(name.clone()));
                         self.position.push(branch.into())
-                    });
+                    };
                     self.transition(PreviousItem, tabs);
                 }
                 NextItem | PreviousItem => {
@@ -216,100 +210,103 @@ impl State {
                     if event == Enter {
                         self.enter_handler(tabs, Enter);
                     }
-                    self.current_branch(tabs)
-                        .and_then(|branch| {
-                            let list = branch.get_list();
-                            match branch {
-                                Branch::Args(args) => {
-                                    let columns = args.get_columns();
-                                    if columns.len() > 1 && event != Enter {
-                                        self.position
-                                            .last()
-                                            .map(|node| {
-                                                let mut node = node.clone();
-                                                node.inc_index(columns.len() - 1);
-                                                node
-                                            })
-                                            .map(|node| (node, true))
-                                    } else {
-                                        list.into_iter()
-                                            .position(|name| {
-                                                self.position
-                                                    .last()
-                                                    .map_or(true, |node| name == *node.text())
-                                            })
-                                            .and_then(|name| {
-                                                args.get_value_by_indexes(
-                                                    name,
-                                                    if event == Enter {
-                                                        self.position
-                                                            .last()
-                                                            .and_then(|node| {
-                                                                node.args().map(|(_, index)| *index)
-                                                            })
-                                                            .unwrap_or(0)
-                                                    } else {
-                                                        0
-                                                    },
-                                                )
-                                            })
-                                            .and_then(|value| value.as_struct())
-                                            .map(|branch| (Node::from(branch), false))
-                                    }
-                                }
-                                Branch::Tree(tree) => tree
-                                    .get_branches()
-                                    .into_iter()
-                                    .find_map(|(name, branch)| {
-                                        self.position.last().and_then(|node| {
-                                            if name == node.text() && !branch.is_empty() {
-                                                Some(branch)
-                                            } else {
-                                                None
-                                            }
+                    if let Some((node, replace)) = self.current_branch(tabs).and_then(|branch| {
+                        let list = branch.get_list();
+                        match branch {
+                            Branch::Args(args) => {
+                                let columns = args.get_columns();
+                                if columns.len() > 1 && event != Enter {
+                                    self.position
+                                        .last()
+                                        .map(|node| {
+                                            let mut node = node.clone();
+                                            node.inc_index(columns.len() - 1);
+                                            node
                                         })
+                                        .map(|node| (node, true))
+                                } else {
+                                    list.into_iter()
+                                        .position(|name| {
+                                            self.position
+                                                .last()
+                                                .map_or(true, |node| name == *node.text())
+                                        })
+                                        .and_then(|name| {
+                                            args.get_value_by_indexes(
+                                                name,
+                                                if event == Enter {
+                                                    self.position
+                                                        .last()
+                                                        .and_then(|node| {
+                                                            node.args().map(|(_, index)| *index)
+                                                        })
+                                                        .unwrap_or(0)
+                                                } else {
+                                                    0
+                                                },
+                                            )
+                                        })
+                                        .and_then(|value| value.as_struct())
+                                        .map(|branch| (Node::from(branch), false))
+                                }
+                            }
+                            Branch::Tree(tree) => tree
+                                .get_branches()
+                                .into_iter()
+                                .find_map(|(name, branch)| {
+                                    self.position.last().and_then(|node| {
+                                        if name == node.text() && !branch.is_empty() {
+                                            Some(branch)
+                                        } else {
+                                            None
+                                        }
                                     })
-                                    .map(|current| (Node::from(current), false)),
-                            }
-                        })
-                        .map(|(node, replace)| {
-                            if replace {
-                                self.position.pop();
-                            }
-                            self.position.push(node)
-                        });
+                                })
+                                .map(|current| (Node::from(current), false)),
+                        }
+                    }) {
+                        if replace {
+                            self.position.pop();
+                        }
+                        self.position.push(node)
+                    }
                 }
                 PreviousLevel => {
-                    self.current_branch(tabs)
-                        .and_then(|branch| match branch {
-                            Branch::Args(_) => Some(()),
-                            Branch::Tree(_) => None,
-                        })
-                        .map_or(Some(()), |_| {
-                            self.position.last_mut().and_then(|node| node.dec_index())
-                        })
-                        .map(|_| {
-                            if self.position.len() > 2 {
-                                self.position.pop();
-                            }
-                        });
+                    if self.position.len() > 2
+                        && self
+                            .current_branch(tabs)
+                            .and_then(|branch| match branch {
+                                Branch::Args(_) => Some(()),
+                                Branch::Tree(_) => None,
+                            })
+                            .map_or(Some(()), |_| {
+                                self.position
+                                    .last_mut()
+                                    .and_then(|node| node.dec_index().then_some(()))
+                            })
+                            .is_some()
+                    {
+                        self.position.pop();
+                    };
                 }
                 _ => (),
             }
         }
     }
 
-    fn enter_handler<'a, 'b>(&mut self, tabs: &'b mut crate::Branches<'a>, event: crate::Event) {
+    fn enter_handler<'a>(&mut self, tabs: &mut crate::Branches<'a>, event: crate::Event) {
         if let Some(value) = self.current_value(tabs) {
             let mut to_check = false;
             let check = value.check();
 
             if value.is_bool() {
-                value.as_bool_mut().map(|value| *value = !*value);
+                if let Some(value) = value.as_bool_mut() {
+                    *value = !*value
+                };
             } else if let Some(text) = value.as_text_mut() {
                 use crate::Event::*;
                 if self.input.is_none() && event == Enter {
-                    self.input = text.lines().get(0).map(|str| str.clone());
+                    self.input = text.lines().get(0).cloned();
                     to_check = true;
                 } else if let Some(saved) = &self.input {
                     match event {
@@ -343,13 +340,13 @@ impl State {
 
             if to_check {
                 let res = value.check();
-                value.as_text_mut().map(|text| {
+                if let Some(text) = value.as_text_mut() {
                     if !res {
                         text.set_style(Style::default().fg(tui::style::Color::Red));
                     } else {
                         text.set_style(Style::default().fg(tui::style::Color::Green));
                     }
-                });
+                };
             }
         }
     }

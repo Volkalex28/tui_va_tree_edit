@@ -54,11 +54,7 @@ impl<'a> Branch<'a> {
                 .into_iter()
                 .map(|span| span.content.to_string())
                 .collect(),
-            Branch::Tree(tree) => tree
-                .branches
-                .iter()
-                .map(|(name, _)| name.clone())
-                .collect(),
+            Branch::Tree(tree) => tree.branches.iter().map(|(name, _)| name.clone()).collect(),
         }
     }
     pub fn is_empty(&self) -> bool {
@@ -94,7 +90,6 @@ pub struct Tree<'a> {
     branches: crate::Branches<'a>,
 }
 impl<'a> Tree<'a> {
-
     pub fn branch(mut self, branch_name: impl Into<String>, branch: impl Into<Branch<'a>>) -> Self {
         self.branches.insert(branch_name.into(), branch.into());
         self
@@ -114,7 +109,7 @@ impl<'a> DrawerRef<'a> for Tree<'a> {
         buf: &mut tui::buffer::Buffer,
         state: (&State, &mut usize),
     ) {
-        if self.branches.len() == 0 || *state.1 > state.0.position.len() {
+        if self.branches.is_empty() || *state.1 > state.0.position.len() {
             return;
         }
         let items = {
@@ -161,11 +156,13 @@ impl<'a> DrawerRef<'a> for Tree<'a> {
         })
         .repeat_highlight_symbol(true)
         .style(state.0.style)
-        .highlight_style(if *state.1 + 1 <= state.0.position.len() && state.0.input.is_none() {
-            state.0.highlight_style
-        } else {
-            state.0.style
-        });
+        .highlight_style(
+            if *state.1 < state.0.position.len() && state.0.input.is_none() {
+                state.0.highlight_style
+            } else {
+                state.0.style
+            },
+        );
         let chunks = Layout::default()
             .direction(Direction::Horizontal)
             .constraints(constrains)
@@ -173,13 +170,11 @@ impl<'a> DrawerRef<'a> for Tree<'a> {
 
         list_state.select(Some(current.unwrap_or(usize::MAX)));
         list.render(chunks[0], buf, &mut list_state);
-        current.map(|index| {
+        if let Some(index) = current {
             *state.1 += 1;
-            self.branches
-                .iter()
-                .skip(index)
-                .next()
-                .map(|(_, branch)| branch.render(chunks[1], buf, state));
-        });
+            if let Some((_, branch)) = self.branches.iter().nth(index) {
+                branch.render(chunks[1], buf, state)
+            }
+        };
     }
 }
