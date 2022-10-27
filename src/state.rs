@@ -272,7 +272,7 @@ impl State {
                     }
                 }
                 PreviousLevel => {
-                    if self.position.len() > 2
+                    if self.position.len() >= 2
                         && self
                             .current_branch(tabs)
                             .and_then(|branch| match branch {
