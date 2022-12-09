@@ -180,7 +180,7 @@ impl State {
         }
     }
 
-    pub fn transition<'a>(&mut self, event: crate::Event, tabs: &mut crate::Branches<'a>) {
+    pub fn transition(&mut self, event: crate::Event, tabs: &mut crate::Branches) {
         if self.input.is_some() {
             self.enter_handler(tabs, event)
         } else {
@@ -309,8 +309,9 @@ impl State {
                 if let Some(value) = value.as_bool_mut() {
                     *value = !*value
                 };
-            } else if let Some(text) = value.as_text_mut() {
+            } else if let Some(text) = value.as_text() {
                 use crate::Event::*;
+                let mut text = text.lock().unwrap();
                 if self.input.is_none() && event == Enter {
                     self.input = text.lines().get(0).cloned();
                     to_check = true;
@@ -346,7 +347,8 @@ impl State {
 
             if to_check {
                 let res = value.check();
-                if let Some(text) = value.as_text_mut() {
+                if let Some(text) = value.as_text() {
+                    let mut text = text.lock().unwrap();
                     if !res {
                         text.set_style(Style::default().fg(tui::style::Color::Red));
                     } else {

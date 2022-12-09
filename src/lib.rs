@@ -1,8 +1,8 @@
+pub use argument::value::NumberType;
+pub use argument::value::StringType;
+pub use argument::value::Type;
+pub use argument::value::Value;
 pub use argument::Args;
-pub use argument::NumberType;
-pub use argument::StringType;
-pub use argument::Type;
-pub use argument::Value;
 use linked_hash_map::LinkedHashMap;
 pub use state::Node;
 pub use tree::Branch;
@@ -18,7 +18,7 @@ pub type Branches<'a> = LinkedHashMap<String, Branch<'a>>;
 type BranchItem<'a, 'b> = (&'b String, &'b Branch<'a>);
 type BranchItemMut<'a, 'b> = (&'b String, &'b mut Branch<'a>);
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum Event {
     NextTab,
     PreviousTab,
