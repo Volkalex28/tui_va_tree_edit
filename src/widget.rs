@@ -8,13 +8,13 @@ use super::TreeEdit;
 
 pub struct Drawer<'a, 'b>(&'b TreeEdit<'a>);
 
-impl<'a, 'b> Drawer<'a, 'b> {
-    pub fn new(tree_edit: &'b TreeEdit<'a>) -> Self {
-        Self(tree_edit)
+impl Drawer<'_, '_> {
+    pub fn new<'a, 'b>(tree_edit: &'b TreeEdit<'a>) -> Drawer<'a, 'b> {
+        Drawer(tree_edit)
     }
 }
 
-pub trait DrawerRef<'a> {
+pub trait DrawerRef {
     fn render(
         &self,
         area: tui::layout::Rect,
@@ -23,7 +23,7 @@ pub trait DrawerRef<'a> {
     );
 }
 
-impl<'a, 'b> Widget for Drawer<'a, 'b> {
+impl Widget for Drawer<'_, '_> {
     fn render(self, area: tui::layout::Rect, buf: &mut tui::buffer::Buffer) {
         if area.area() == 0 {
             return;
@@ -34,7 +34,7 @@ impl<'a, 'b> Widget for Drawer<'a, 'b> {
                 .tabs
                 .iter()
                 .map(|(tab_name, _)| tab_name.clone().into())
-                .collect::<Vec<Spans<'a>>>()
+                .collect::<Vec<Spans>>()
         };
 
         let block = Block::default()

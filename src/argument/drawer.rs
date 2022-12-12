@@ -140,7 +140,7 @@ pub struct Drawer<'r, 'a>(pub(super) &'r Args<'a>);
 impl<'r, 'a> Drawer<'r, 'a> {
     fn current(&self, state: &DState) -> Option<(usize, usize)> {
         state.0.node(*state.1).and_then(|current| {
-            current.args().and_then(|(current, col)| {
+            current.as_args().and_then(|(current, col)| {
                 self.names
                     .iter()
                     .enumerate()
@@ -193,13 +193,23 @@ impl<'r, 'a> Drawer<'r, 'a> {
                 .into_iter()
                 .chain(values.iter())
                 .map(|values| {
-                        values.iter().fold(0usize, |max, (name, value)| {
-                            max.max(name.len() + 1).max(match value {
-                                Text::Text(text) => text.lock().unwrap().lines().first().map_or(0, |str| str.len()),
-                                Text::Span(span) => span.width()
-                            })
+                    let len = values.iter().fold(0usize, |max, (name, value)| {
+                        max.max(name.len() + 1).max(match value {
+                            Text::Text(text) => text
+                                .lock()
+                                .unwrap()
+                                .lines()
+                                .first()
+                                .map_or(0, |str| str.len()),
+                            Text::Span(span) => span.width(),
                         })
-                    } + 3)
+                    });
+                    if len > 1 {
+                        len + 3
+                    } else {
+                        0
+                    }
+                })
                 .collect::<Vec<usize>>()
         };
         let chunks = Layout::default()
@@ -246,7 +256,7 @@ impl<'r, 'a> Drawer<'r, 'a> {
     }
 }
 
-impl<'a, 'r> DrawerRef<'a> for Drawer<'r, 'a> {
+impl<'r> DrawerRef for Drawer<'r, '_> {
     fn render(
         &self,
         area: tui::layout::Rect,
@@ -276,14 +286,12 @@ impl<'a, 'r> DrawerRef<'a> for Drawer<'r, 'a> {
                 })
                 .map(Vec::from)
                 .zip(inner_chunks.into_iter())
-                .map(|(paragraphes, chunks)| paragraphes.into_iter().zip(chunks.into_iter()))
-                .for_each(|paragraphes| {
-                    paragraphes.for_each(|(paragraph, area)| match paragraph {
-                        ToRender::Text(text) => {
-                            text.lock().unwrap().widget().render(area, buf);
-                        }
-                        ToRender::Paragraph(paragraph) => paragraph.render(area, buf),
-                    })
+                .flat_map(|(paragraphes, chunks)| paragraphes.into_iter().zip(chunks.into_iter()))
+                .for_each(|(paragraph, area)| match paragraph {
+                    ToRender::Text(text) => {
+                        text.lock().unwrap().widget().render(area, buf);
+                    }
+                    ToRender::Paragraph(paragraph) => paragraph.render(area, buf),
                 });
 
             chunks
@@ -292,7 +300,7 @@ impl<'a, 'r> DrawerRef<'a> for Drawer<'r, 'a> {
         if let Some(branch) = current.and_then(|(name, col)| {
             self.get_value_by_indexes(name - 1, col - 1)
                 .and_then(|value| match &value.1 {
-                    ValueVariant::Struct(branch) => Some(branch),
+                    ValueVariant::Struct(b) => Some(b),
                     _ => None,
                 })
         }) {

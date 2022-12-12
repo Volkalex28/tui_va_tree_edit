@@ -1,6 +1,10 @@
+use std::fmt::Debug;
+
+use crate::{array::Array, Branch, Value};
 use tui::style::Style;
 
-use crate::{Branch, Value};
+type BranchItem<'a, 'b> = (&'b String, &'b Branch<'a>);
+type BranchItemMut<'a, 'b> = (&'b String, &'b mut Branch<'a>);
 
 #[derive(Clone, Debug)]
 pub enum Node {
@@ -15,14 +19,14 @@ impl Node {
         matches!(self, Self::Args(_, _))
     }
 
-    pub fn tree(&self) -> Option<&String> {
+    pub fn as_tree(&self) -> Option<&String> {
         if let Self::Tree(name) = self {
             Some(name)
         } else {
             None
         }
     }
-    pub fn args(&self) -> Option<(&String, &usize)> {
+    pub fn as_args(&self) -> Option<(&String, &usize)> {
         if let Self::Args(name, col) = self {
             Some((name, col))
         } else {
@@ -31,9 +35,14 @@ impl Node {
     }
 
     pub fn text(&self) -> &String {
-        self.tree()
-            .or_else(|| self.args().map(|(text, _)| text))
+        self.as_tree()
+            .or_else(|| self.as_args().map(|(text, _)| text))
             .unwrap()
+    }
+    pub fn text_mut(&mut self) -> &mut String {
+        match self {
+            Node::Tree(t) | Node::Args(t, _) => t,
+        }
     }
     fn change_text(&mut self, text: String) {
         *match self {
@@ -58,8 +67,8 @@ impl Node {
         false
     }
 }
-impl<'a> From<&Branch<'a>> for Node {
-    fn from(branch: &Branch<'a>) -> Self {
+impl From<&Branch<'_>> for Node {
+    fn from(branch: &Branch) -> Self {
         match branch {
             Branch::Args(_) => Self::Args(
                 branch
@@ -69,7 +78,7 @@ impl<'a> From<&Branch<'a>> for Node {
                     .clone(),
                 0,
             ),
-            Branch::Tree(_) => Self::Tree(
+            Branch::Tree(_) | Branch::Array(_) => Self::Tree(
                 branch
                     .get_list()
                     .first()
@@ -79,20 +88,27 @@ impl<'a> From<&Branch<'a>> for Node {
         }
     }
 }
-
-#[derive(Default, Clone, Debug)]
+#[derive(Default, Clone)]
 pub struct State {
     pub position: Vec<Node>,
     pub input: Option<String>,
     pub style: Style,
     pub highlight_style: Style,
 }
+impl Debug for State {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("State")
+            .field("position", &self.position)
+            .field("input", &self.input)
+            .finish()
+    }
+}
 impl State {
-    pub fn index_tab<'a>(&self, tabs: &crate::Branches<'a>) -> Option<usize> {
+    pub fn index_tab(&self, tabs: &crate::Branches) -> Option<usize> {
         tabs.iter().position(|(tab_name, _)| {
             self.position
                 .get(0)
-                .and_then(|node| node.tree().map(|name| name == tab_name))
+                .and_then(|node| node.as_tree().map(|name| name == tab_name))
                 .unwrap_or(false)
         })
     }
@@ -104,31 +120,40 @@ impl State {
     pub fn current_tab<'a, 'b>(
         &self,
         tabs: &'b mut crate::Branches<'a>,
-    ) -> Option<crate::BranchItemMut<'a, 'b>> {
+    ) -> Option<BranchItemMut<'a, 'b>> {
         self.index_tab(tabs)
             .and_then(|index| tabs.iter_mut().nth(index))
     }
-    fn next_tab<'a, 'b>(&self, tabs: &'b crate::Branches<'a>) -> Option<crate::BranchItem<'a, 'b>> {
+    fn next_tab<'a, 'b>(&self, tabs: &'b crate::Branches<'a>) -> Option<BranchItem<'a, 'b>> {
         tabs.iter().nth(self.index_tab(tabs).unwrap_or(0) + 1)
     }
-    fn previous_tab<'a, 'b>(
-        &self,
-        tabs: &'b crate::Branches<'a>,
-    ) -> Option<crate::BranchItem<'a, 'b>> {
+    fn previous_tab<'a, 'b>(&self, tabs: &'b crate::Branches<'a>) -> Option<BranchItem<'a, 'b>> {
         self.index_tab(tabs).and_then(|index| {
             tabs.iter()
                 .nth(if index == 0 { usize::MAX } else { index - 1 })
         })
     }
 
+    fn branch<'a, 'b>(
+        &self,
+        tabs: &'b mut crate::Branches<'a>,
+        offset: usize,
+    ) -> Option<&'b mut Branch<'a>> {
+        self.current_tab(tabs).and_then(|(_, branch)| {
+            Self::incise_position(
+                branch,
+                self.position.iter().skip(1).rev().skip(offset + 1).rev(),
+            )
+        })
+    }
+    #[inline]
     fn current_branch<'a, 'b>(
         &self,
         tabs: &'b mut crate::Branches<'a>,
     ) -> Option<&'b mut Branch<'a>> {
-        self.current_tab(tabs).and_then(|(_, branch)| {
-            Self::incise_position(branch, self.position.iter().skip(1).rev().skip(1).rev())
-        })
+        self.branch(tabs, 0)
     }
+
     fn next_item_impl<'a>(&self, iter: impl Iterator<Item = &'a String>) -> Option<String> {
         iter.skip_while(|&name| {
             self.position
@@ -138,23 +163,36 @@ impl State {
         .nth(1)
         .cloned()
     }
-    fn next_item<'a>(&self, tabs: &mut crate::Branches<'a>) -> Option<String> {
+    fn next_item(&self, tabs: &mut crate::Branches) -> Option<String> {
         self.current_branch(tabs)
             .and_then(|branch| self.next_item_impl(branch.get_list().iter()))
     }
-    fn previous_item<'a>(&self, tabs: &mut crate::Branches<'a>) -> Option<String> {
+    fn previous_item(&self, tabs: &mut crate::Branches) -> Option<String> {
         self.current_branch(tabs)
             .and_then(|branch| self.next_item_impl(branch.get_list().iter().rev()))
     }
 
+    fn value<'a, 'b>(
+        &self,
+        tabs: &'b mut crate::Branches<'a>,
+        offset: usize,
+    ) -> Option<&'b mut Value<'a>> {
+        self.branch(tabs, offset)
+            .and_then(|branch| branch.as_args_mut())
+            .zip(
+                self.position
+                    .iter()
+                    .nth_back(offset)
+                    .and_then(|node| node.as_args()),
+            )
+            .and_then(|(args, (name, column))| args.get_value_by_cindex_mut(name, *column))
+    }
+    #[inline]
     fn current_value<'a, 'b>(
         &self,
         tabs: &'b mut crate::Branches<'a>,
     ) -> Option<&'b mut Value<'a>> {
-        self.current_branch(tabs)
-            .and_then(|branch| branch.args_mut())
-            .zip(self.position.last().and_then(|node| node.args()))
-            .and_then(|(args, (name, column))| args.get_value_by_cindex_mut(name, *column))
+        self.value(tabs, 0)
     }
 
     fn incise_position<'a, 'b, 'n>(
@@ -166,141 +204,170 @@ impl State {
                 Branch::Args(args) => args
                     .get_value_by_cindex_mut(
                         node.text(),
-                        node.args().map_or(usize::MAX, |(_, index)| *index),
+                        node.as_args().map_or(usize::MAX, |(_, index)| *index),
                     )
                     .and_then(|value| value.as_struct_mut()),
-                Branch::Tree(tree) => tree.get_branches_mut().get_mut(node.text()),
+                Branch::Tree(tree) | Branch::Array(Array { tree, .. }) => {
+                    tree.get_branches_mut().get_mut(node.text())
+                }
             } {
                 Self::incise_position(branch, nodes)
             } else {
                 None
             }
         } else {
-            Some(branch)
+            Some(branch.into())
         }
     }
 
     pub fn transition(&mut self, event: crate::Event, tabs: &mut crate::Branches) {
         if self.input.is_some() {
-            self.enter_handler(tabs, event)
-        } else {
-            use crate::Event::*;
-            match event {
-                NextTab | PreviousTab => {
-                    if let Some((name, branch)) = if event == NextTab {
-                        self.next_tab(tabs).or_else(|| tabs.front())
-                    } else {
-                        self.previous_tab(tabs).or_else(|| tabs.back())
-                    } {
-                        self.position.clear();
-                        self.position.push(Node::Tree(name.clone()));
-                        self.position.push(branch.into())
-                    };
-                    self.transition(PreviousItem, tabs);
-                }
-                NextItem | PreviousItem => {
-                    if event == NextItem {
-                        self.next_item(tabs)
-                    } else {
-                        self.previous_item(tabs)
+            self.enter_handler(tabs, event);
+            return;
+        }
+
+        use crate::Event::*;
+        match event {
+            NextTab | PreviousTab => self.tab_handler(tabs, event == NextTab),
+            NextItem | PreviousItem => self.item_handler(tabs, event == NextItem),
+            NextLevel | Enter => {
+                if event == Enter {
+                    if self.enter_handler(tabs, Enter) {
+                        self.next_level_handler(tabs, event == NextLevel)
                     }
-                    .map(|text| self.position.last_mut().map(|node| node.change_text(text)));
+                } else {
+                    self.next_level_handler(tabs, event == NextLevel)
                 }
-                NextLevel | Enter => {
-                    if event == Enter {
-                        self.enter_handler(tabs, Enter);
-                    }
-                    if let Some((node, replace)) = self.current_branch(tabs).and_then(|branch| {
-                        let list = branch.get_list();
-                        match branch {
-                            Branch::Args(args) => {
-                                let columns = args.get_columns();
-                                if columns.len() > 1 && event != Enter {
-                                    self.position
-                                        .last()
-                                        .map(|node| {
-                                            let mut node = node.clone();
-                                            node.inc_index(columns.len() - 1);
-                                            node
-                                        })
-                                        .map(|node| (node, true))
-                                } else {
-                                    list.into_iter()
-                                        .position(|name| {
-                                            self.position
-                                                .last()
-                                                .map_or(true, |node| name == *node.text())
-                                        })
-                                        .and_then(|name| {
-                                            args.get_value_by_indexes(
-                                                name,
-                                                if event == Enter {
-                                                    self.position
-                                                        .last()
-                                                        .and_then(|node| {
-                                                            node.args().map(|(_, index)| *index)
-                                                        })
-                                                        .unwrap_or(0)
-                                                } else {
-                                                    0
-                                                },
-                                            )
-                                        })
-                                        .and_then(|value| value.as_struct())
-                                        .map(|branch| (Node::from(branch), false))
-                                }
-                            }
-                            Branch::Tree(tree) => tree
-                                .get_branches()
-                                .into_iter()
-                                .find_map(|(name, branch)| {
-                                    self.position.last().and_then(|node| {
-                                        if name == node.text() && !branch.is_empty() {
-                                            Some(branch)
-                                        } else {
-                                            None
-                                        }
-                                    })
-                                })
-                                .map(|current| (Node::from(current), false)),
-                        }
-                    }) {
-                        if replace {
-                            self.position.pop();
-                        }
-                        self.position.push(node)
-                    }
-                }
-                PreviousLevel => {
-                    if (self.position.len() > 2
-                        || self
-                            .position
-                            .last()
-                            .and_then(|node| node.args())
-                            .and_then(|(_, index)| (*index > 0).then_some(()))
-                            .is_some())
-                        && self
-                            .current_branch(tabs)
-                            .and_then(|branch| match branch {
-                                Branch::Args(_) => Some(()),
-                                Branch::Tree(_) => None,
-                            })
-                            .map_or(Some(()), |_| {
-                                self.position
-                                    .last_mut()
-                                    .and_then(|node| node.dec_index().then_some(()))
-                            })
-                            .is_some()
-                    {
-                        self.position.pop();
-                    };
-                }
-                _ => (),
             }
+            PreviousLevel => {
+                if (self.position.len() > 2
+                    || self
+                        .position
+                        .last()
+                        .and_then(|node| node.as_args())
+                        .and_then(|(_, index)| (*index > 0).then_some(()))
+                        .is_some())
+                    && self
+                        .current_branch(tabs)
+                        .and_then(|branch| match branch {
+                            Branch::Args(_) => Some(()),
+                            Branch::Tree(_) | Branch::Array(_) => None,
+                        })
+                        .map_or(Some(()), |_| {
+                            self.position
+                                .last_mut()
+                                .and_then(|node| node.dec_index().then_some(()))
+                        })
+                        .is_some()
+                {
+                    self.position.pop();
+                }
+            }
+            Delete => {
+                let Some(node) = self.position.last().map(|n| n.text()) else {
+                    return;
+                };
+
+                if let Some(array) = self
+                    .value(tabs, 1)
+                    .and_then(|v| v.as_array_mut())
+                    .filter(|a| !a.get_branches().is_empty())
+                {
+                    if let Some(current) = array.remove(node) {
+                        *self.position.last_mut().map(|n| n.text_mut()).unwrap() = current
+                    } else {
+                        self.position.pop();
+                    }
+                } else {
+                    return;
+                };
+            }
+            _ => (),
         }
     }
 
-    fn enter_handler<'a>(&mut self, tabs: &mut crate::Branches<'a>, event: crate::Event) {
+    fn tab_handler(&mut self, tabs: &mut crate::Branches, is_next: bool) {
+        if let Some((name, branch)) = if is_next {
+            self.next_tab(tabs).or_else(|| tabs.front())
+        } else {
+            self.previous_tab(tabs).or_else(|| tabs.back())
+        } {
+            self.position.clear();
+            self.position.push(Node::Tree(name.clone()));
+            self.position.push(branch.into())
+        };
+        self.transition(crate::Event::PreviousItem, tabs)
+    }
+
+    fn item_handler(&mut self, tabs: &mut crate::Branches, is_next: bool) {
+        if is_next {
+            self.next_item(tabs)
+        } else {
+            self.previous_item(tabs)
+        }
+        .map(|text| self.position.last_mut().map(|node| node.change_text(text)));
+    }
+
+    fn next_level_handler(&mut self, tabs: &mut crate::Branches, is_next: bool) {
+        let Some(branch) = self.current_branch(tabs) else {
+            return;
+        };
+
+        let list = branch.get_list();
+        let res = match branch {
+            Branch::Args(args) => 'args: {
+                let columns = args.get_columns();
+                if columns.len() > 1 && is_next {
+                    break 'args self.position.last().map(|node| {
+                        let mut node = node.clone();
+                        node.inc_index(columns.len() - 1);
+                        (node, true)
+                    });
+                }
+                list.into_iter()
+                    .position(|name| {
+                        self.position
+                            .last()
+                            .map_or(true, |node| name == *node.text())
+                    })
+                    .and_then(|name| {
+                        let index = (!is_next)
+                            .then(|| {
+                                self.position
+                                    .last()
+                                    .and_then(|node| node.as_args().map(|(_, index)| *index))
+                            })
+                            .flatten();
+                        args.get_value_by_indexes(name, index.unwrap_or(0))
+                    })
+                    .and_then(|v| {
+                        v.as_struct()
+                            .filter(|_| v.as_array().map_or(true, |a| !a.branches.is_empty()))
+                            .map(Into::into)
+                    })
+                    .map(|node| (node, false))
+            }
+            Branch::Tree(tree) | Branch::Array(Array { tree, .. }) => tree
+                .get_branches()
+                .into_iter()
+                .find_map(|(name, branch)| {
+                    self.position.last().and_then(|node| {
+                        (name == node.text() && !branch.is_empty()).then_some(branch)
+                    })
+                })
+                .map(|current| (Node::from(current), false)),
+        };
+        let Some((node, replace)) = res else {
+            return;
+        };
+
+        if replace {
+            self.position.pop();
+        }
+        self.position.push(node);
+    }
+
+    fn enter_handler(&mut self, tabs: &mut crate::Branches, event: crate::Event) -> bool {
         if let Some(value) = self.current_value(tabs) {
             let mut to_check = false;
             let check = value.check();
@@ -309,6 +376,9 @@ impl State {
                 if let Some(value) = value.as_bool_mut() {
                     *value = !*value
                 };
+            } else if let Some(arr) = value.as_array_mut() {
+                arr.insert_default(None);
+                return false;
             } else if let Some(text) = value.as_text() {
                 use crate::Event::*;
                 let mut text = text.lock().unwrap();
@@ -357,5 +427,6 @@ impl State {
                 };
             }
         }
+        true
     }
 }

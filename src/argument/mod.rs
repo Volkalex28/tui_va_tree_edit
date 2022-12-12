@@ -6,7 +6,7 @@ use value::Value;
 mod drawer;
 pub mod value;
 
-#[derive(Default, Clone)]
+#[derive(Debug, Default, Clone)]
 pub struct Args<'a> {
     names: Vec<String>,
     columns: Vec<String>,
@@ -15,25 +15,28 @@ pub struct Args<'a> {
 impl<'a> Args<'a> {
     pub fn names<T: IntoIterator>(mut self, names: T) -> Self
     where
-        T::Item: Into<String>,
+        T::Item: ToString,
     {
-        self.names = names.into_iter().map(|name| name.into()).collect();
+        self.names = names.into_iter().map(|name| name.to_string()).collect();
         self
     }
     pub fn columns<T: IntoIterator>(mut self, columns: T) -> Self
     where
-        T::Item: Into<String>,
+        T::Item: ToString,
     {
-        self.columns = columns.into_iter().map(|column| column.into()).collect();
+        self.columns = columns
+            .into_iter()
+            .map(|column| column.to_string())
+            .collect();
         self
     }
-    pub fn value<N: Into<String>, C: Into<String>, V: Into<Value<'a>>>(
+    pub fn value<N: ToString, C: ToString, V: Into<Value<'a>>>(
         mut self,
         name: N,
         column: C,
         value: V,
     ) -> Self {
-        self.positions(&name.into(), &column.into())
+        self.positions(&name.to_string(), &column.to_string())
             .map(|indexes| self.values.insert(indexes, value.into()));
         self
     }
@@ -50,20 +53,16 @@ impl<'a> Args<'a> {
     pub fn get_columns(&self) -> Vec<Span<'a>> {
         self.columns.iter().map(|col| col.clone().into()).collect()
     }
-    pub fn get_value(
-        &self,
-        name: impl Into<String>,
-        column: impl Into<String>,
-    ) -> Option<&Value<'a>> {
-        self.positions(&name.into(), &column.into())
+    pub fn get_value(&self, name: impl ToString, column: impl ToString) -> Option<&Value<'a>> {
+        self.positions(&name.to_string(), &column.to_string())
             .and_then(|indexes| self.values.get(&indexes))
     }
     pub fn get_value_mut(
         &mut self,
-        name: impl Into<String>,
-        column: impl Into<String>,
+        name: impl ToString,
+        column: impl ToString,
     ) -> Option<&mut Value<'a>> {
-        self.positions(&name.into(), &column.into())
+        self.positions(&name.to_string(), &column.to_string())
             .and_then(|indexes| self.values.get_mut(&indexes))
     }
     pub fn get_value_by_indexes(&self, name: usize, column: usize) -> Option<&Value<'a>> {
@@ -76,20 +75,16 @@ impl<'a> Args<'a> {
     ) -> Option<&mut Value<'a>> {
         self.values.get_mut(&(name, column))
     }
-    pub fn get_value_by_cindex(
-        &self,
-        name: impl Into<String>,
-        column: usize,
-    ) -> Option<&Value<'a>> {
-        Self::position(self.names.iter(), &name.into())
+    pub fn get_value_by_cindex(&self, name: impl ToString, column: usize) -> Option<&Value<'a>> {
+        Self::position(self.names.iter(), &name.to_string())
             .and_then(|index| self.values.get(&(index, column)))
     }
     pub fn get_value_by_cindex_mut(
         &mut self,
-        name: impl Into<String>,
+        name: impl ToString,
         column: usize,
     ) -> Option<&mut Value<'a>> {
-        Self::position(self.names.iter(), &name.into())
+        Self::position(self.names.iter(), &name.to_string())
             .and_then(|index| self.values.get_mut(&(index, column)))
     }
 
@@ -103,7 +98,7 @@ impl<'a> Args<'a> {
         Self::position(self.names.iter(), name).zip(Self::position(self.columns.iter(), column))
     }
 }
-impl<'a> DrawerRef<'a> for Args<'a> {
+impl DrawerRef for Args<'_> {
     fn render(
         &self,
         area: tui::layout::Rect,

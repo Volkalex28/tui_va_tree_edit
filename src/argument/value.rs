@@ -1,4 +1,4 @@
-use crate::{Args, Branch, Tree};
+use crate::{array::Array, Args, Branch, Tree};
 use std::{
     fmt::{Debug, Display},
     str::FromStr,
@@ -88,12 +88,22 @@ impl Display for Type {
     }
 }
 
-#[derive(Clone)]
 pub enum ValueVariant<'a> {
     Bool(bool),
     TextArea(Arc<Mutex<TextArea<'a>>>),
-    Array(Vec<ValueVariant<'a>>),
     Struct(Branch<'a>),
+}
+impl Debug for ValueVariant<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Bool(arg0) => f.debug_tuple("Bool").field(arg0).finish(),
+            Self::TextArea(arg0) => f
+                .debug_tuple("TextArea")
+                .field(&arg0.lock().unwrap().lines()[0])
+                .finish(),
+            Self::Struct(arg0) => f.debug_tuple("Struct").field(arg0).finish(),
+        }
+    }
 }
 impl<'a> Display for ValueVariant<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -109,10 +119,22 @@ impl<'a> Display for ValueVariant<'a> {
                     .get(0)
                     .unwrap_or(&String::default())
                     .clone(),
-                ValueVariant::Array(arr) => format!("Count: {}", arr.len()),
+                ValueVariant::Struct(arr @ Branch::Array(_)) =>
+                    format!("Count: {}", arr.get_list().len()),
                 ValueVariant::Struct(_) => "->".to_string(),
             }
         )
+    }
+}
+impl Clone for ValueVariant<'_> {
+    fn clone(&self) -> Self {
+        match self {
+            Self::Bool(arg0) => Self::Bool(arg0.clone()),
+            Self::TextArea(arg0) => {
+                Self::TextArea(Arc::new(Mutex::new(arg0.lock().unwrap().clone())))
+            }
+            Self::Struct(arg0) => Self::Struct(arg0.clone()),
+        }
     }
 }
 impl<'a> From<TextArea<'a>> for ValueVariant<'a> {
@@ -121,7 +143,7 @@ impl<'a> From<TextArea<'a>> for ValueVariant<'a> {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct Value<'a>(pub(super) Type, pub(super) ValueVariant<'a>);
 impl<'a> Default for Value<'a> {
     fn default() -> Self {
@@ -190,15 +212,25 @@ impl<'a> Value<'a> {
             None
         }
     }
+    #[allow(unused)]
+    pub fn as_array(&self) -> Option<&Array<'a>> {
+        if let ValueVariant::Struct(Branch::Array(tree)) = &self.1 {
+            Some(tree)
+        } else {
+            None
+        }
+    }
+    pub(crate) fn as_array_mut(&mut self) -> Option<&mut Array<'a>> {
+        if let ValueVariant::Struct(Branch::Array(tree)) = &mut self.1 {
+            Some(tree)
+        } else {
+            None
+        }
+    }
 
     pub fn into_array(mut self) -> Self {
+        self.1 = ValueVariant::Struct(Array::new(self.clone().into()).into());
         self.0 = Type::Array(Box::new(self.0));
-        self.1 = ValueVariant::Array(vec![self.1]);
-        self
-    }
-    pub fn into_clear_array(mut self) -> Self {
-        self.0 = Type::Array(Box::new(self.0));
-        self.1 = ValueVariant::Array(vec![]);
         self
     }
 
@@ -247,153 +279,83 @@ impl<'a> Value<'a> {
     }
 }
 
-impl<'a> From<bool> for Value<'a> {
-    fn from(value: bool) -> Self {
-        Self(Type::Bool, ValueVariant::Bool(value))
-    }
+macro_rules! impl_get_type {
+    ($($ty:ty $(,)?)+ => $ret:expr) => {
+        $(
+            impl GetType for $ty {
+                fn get() -> Type {
+                    $ret
+                }
+            }
+        )+
+    };
 }
-impl<'a> From<u8> for Value<'a> {
-    fn from(value: u8) -> Self {
+macro_rules! impl_from_for_value {
+    ($($ty:ty $(,)?)+ => $var:expr; $ident:ident) => {
+        $(impl<'a> From<$ty> for Value<'a> {
+            fn from($ident: $ty) -> Self {
+                Self(
+                    <$ty as GetType>::get(),
+                    $var,
+                )
+                .setup()
+            }
+        })+
+    };
+}
+
+trait GetType {
+    fn get() -> Type;
+}
+impl_get_type!(bool => Type::Bool);
+impl_get_type!(u8 => Type::Number(NumberType::U8));
+impl_get_type!(i8 => Type::Number(NumberType::I8));
+impl_get_type!(u16 => Type::Number(NumberType::U16));
+impl_get_type!(i16 => Type::Number(NumberType::I16));
+impl_get_type!(u32 => Type::Number(NumberType::U32));
+impl_get_type!(i32 => Type::Number(NumberType::I32));
+impl_get_type!(u64 => Type::Number(NumberType::U64));
+impl_get_type!(i64 => Type::Number(NumberType::I64));
+impl_get_type!(f32 => Type::Number(NumberType::F32));
+impl_get_type!(f64 => Type::Number(NumberType::F64));
+impl_get_type!(usize => Type::Number(NumberType::Usize));
+impl_get_type!(isize => Type::Number(NumberType::Isize));
+impl_get_type!(char => Type::String(StringType::Char));
+impl_get_type!(&str, String => Type::String(StringType::String));
+impl_get_type!(Tree<'_>, Args<'_> => Type::Struct);
+
+impl_from_for_value!(bool => ValueVariant::Bool(v); v);
+impl_from_for_value!(u8, i8, u16, i16, u32, i32, u64, i64, f32, f64, usize, isize, String, &str, char
+        => TextArea::new(vec![v.to_string()]).into(); v);
+impl_from_for_value!(Tree<'a>, Args<'a>, => ValueVariant::Struct(v.into()); v);
+
+impl<T: GetType + Default> From<Vec<T>> for Value<'_>
+where
+    Self: From<T>,
+{
+    fn from(value: Vec<T>) -> Self {
         Self(
-            Type::Number(NumberType::U8),
-            TextArea::new(vec![value.to_string()]).into(),
+            Type::Array(<T as GetType>::get().into()),
+            ValueVariant::Struct(
+                value
+                    .into_iter()
+                    .fold(
+                        Array::new(Self::from(T::default()).into()),
+                        |mut tree, v| {
+                            tree.insert(None, v);
+                            tree
+                        },
+                    )
+                    .into(),
+            ),
         )
-        .setup()
     }
 }
-impl<'a> From<i8> for Value<'a> {
-    fn from(value: i8) -> Self {
-        Self(
-            Type::Number(NumberType::I8),
-            TextArea::new(vec![value.to_string()]).into(),
-        )
-        .setup()
-    }
-}
-impl<'a> From<u16> for Value<'a> {
-    fn from(value: u16) -> Self {
-        Self(
-            Type::Number(NumberType::U16),
-            TextArea::new(vec![value.to_string()]).into(),
-        )
-        .setup()
-    }
-}
-impl<'a> From<i16> for Value<'a> {
-    fn from(value: i16) -> Self {
-        Self(
-            Type::Number(NumberType::I16),
-            TextArea::new(vec![value.to_string()]).into(),
-        )
-        .setup()
-    }
-}
-impl<'a> From<u32> for Value<'a> {
-    fn from(value: u32) -> Self {
-        Self(
-            Type::Number(NumberType::U32),
-            TextArea::new(vec![value.to_string()]).into(),
-        )
-        .setup()
-    }
-}
-impl<'a> From<i32> for Value<'a> {
-    fn from(value: i32) -> Self {
-        Self(
-            Type::Number(NumberType::I32),
-            TextArea::new(vec![value.to_string()]).into(),
-        )
-        .setup()
-    }
-}
-impl<'a> From<u64> for Value<'a> {
-    fn from(value: u64) -> Self {
-        Self(
-            Type::Number(NumberType::U64),
-            TextArea::new(vec![value.to_string()]).into(),
-        )
-        .setup()
-    }
-}
-impl<'a> From<i64> for Value<'a> {
-    fn from(value: i64) -> Self {
-        Self(
-            Type::Number(NumberType::I64),
-            TextArea::new(vec![value.to_string()]).into(),
-        )
-        .setup()
-    }
-}
-impl<'a> From<f32> for Value<'a> {
-    fn from(value: f32) -> Self {
-        Self(
-            Type::Number(NumberType::F32),
-            TextArea::new(vec![value.to_string()]).into(),
-        )
-        .setup()
-    }
-}
-impl<'a> From<f64> for Value<'a> {
-    fn from(value: f64) -> Self {
-        Self(
-            Type::Number(NumberType::F64),
-            TextArea::new(vec![value.to_string()]).into(),
-        )
-        .setup()
-    }
-}
-impl<'a> From<usize> for Value<'a> {
-    fn from(value: usize) -> Self {
-        Self(
-            Type::Number(NumberType::Usize),
-            TextArea::new(vec![value.to_string()]).into(),
-        )
-        .setup()
-    }
-}
-impl<'a> From<isize> for Value<'a> {
-    fn from(value: isize) -> Self {
-        Self(
-            Type::Number(NumberType::Isize),
-            TextArea::new(vec![value.to_string()]).into(),
-        )
-        .setup()
-    }
-}
-impl<'a> From<String> for Value<'a> {
-    fn from(value: String) -> Self {
-        Self(
-            Type::String(StringType::String),
-            TextArea::new(vec![value]).into(),
-        )
-        .setup()
-    }
-}
-impl<'a> From<&str> for Value<'a> {
-    fn from(value: &str) -> Self {
-        Self(
-            Type::String(StringType::String),
-            TextArea::new(vec![value.to_string()]).into(),
-        )
-        .setup()
-    }
-}
-impl<'a> From<char> for Value<'a> {
-    fn from(value: char) -> Self {
-        Self(
-            Type::String(StringType::Char),
-            TextArea::new(vec![value.to_string()]).into(),
-        )
-        .setup()
-    }
-}
-impl<'a> From<Tree<'a>> for Value<'a> {
-    fn from(value: Tree<'a>) -> Self {
-        Self(Type::Struct, ValueVariant::Struct(value.into()))
-    }
-}
-impl<'a> From<Args<'a>> for Value<'a> {
-    fn from(value: Args<'a>) -> Self {
-        Self(Type::Struct, ValueVariant::Struct(value.into()))
+impl<T: GetType + Default, const S: usize> From<[T; S]> for Value<'_>
+where
+    Self: From<T>,
+{
+    fn from(value: [T; S]) -> Self {
+        value.into_iter().collect::<Vec<_>>().into()
     }
 }

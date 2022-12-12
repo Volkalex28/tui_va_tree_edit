@@ -26,5 +26,6 @@ color-eyre = "0.6"
 tui  = "0.19"
 tui-textarea  = "0.1"
 linked-hash-map = "0.5"
+paste = "1.0.9"
 log = { version = "0.4", features = ["std"] }
 

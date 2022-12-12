@@ -1,22 +1,20 @@
-pub use argument::value::NumberType;
-pub use argument::value::StringType;
-pub use argument::value::Type;
-pub use argument::value::Value;
-pub use argument::Args;
-use linked_hash_map::LinkedHashMap;
+pub use argument::{
+    value::{NumberType, StringType, Type, Value},
+    Args,
+};
+pub use array::Array;
+pub use branch::{Branch, Branches};
 pub use state::Node;
-pub use tree::Branch;
 pub use tree::Tree;
+
 use tui::style::Style;
 
 mod argument;
+mod array;
+mod branch;
 pub mod state;
 mod tree;
 mod widget;
-
-pub type Branches<'a> = LinkedHashMap<String, Branch<'a>>;
-type BranchItem<'a, 'b> = (&'b String, &'b Branch<'a>);
-type BranchItemMut<'a, 'b> = (&'b String, &'b mut Branch<'a>);
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Event {
@@ -29,6 +27,7 @@ pub enum Event {
     Enter,
     Cancel,
     Backspace,
+    Delete,
     Char(char),
 }
 
@@ -38,15 +37,17 @@ pub struct TreeEdit<'a> {
     tabs: Branches<'a>,
     state: state::State,
 }
-impl<'a> TreeEdit<'a> {
-    pub fn new<T: Into<String>>(title: T) -> Self {
+impl TreeEdit<'_> {
+    pub fn new<T: ToString>(title: T) -> Self {
         Self {
-            title: title.into(),
+            title: title.to_string(),
             tabs: Default::default(),
             state: Default::default(),
         }
     }
+}
 
+impl<'a> TreeEdit<'a> {
     pub fn tab(mut self, tab_name: String, tab: impl Into<Branch<'a>>) -> Self {
         self.tabs.insert(tab_name, tab.into());
         if self.get_index_tab().is_none() {
