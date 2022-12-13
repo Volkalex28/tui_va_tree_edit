@@ -44,7 +44,7 @@ impl<'a> Array<'a> {
     }
 
     pub(crate) fn remove(&mut self, index: &String) -> Option<String> {
-        let not_last = !self.branches.back().filter(|&(s, _)| s == index).is_some();
+        let not_last = self.branches.back().filter(|&(s, _)| s == index).is_none();
         self.tree.branches.remove(index);
         self.update();
         not_last

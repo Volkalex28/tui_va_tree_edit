@@ -216,7 +216,7 @@ impl State {
                 None
             }
         } else {
-            Some(branch.into())
+            Some(branch)
         }
     }
 
@@ -278,9 +278,7 @@ impl State {
                     } else {
                         self.position.pop();
                     }
-                } else {
-                    return;
-                };
+                }
             }
             _ => (),
         }

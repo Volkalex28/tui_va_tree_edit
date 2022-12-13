@@ -129,7 +129,7 @@ impl<'a> Display for ValueVariant<'a> {
 impl Clone for ValueVariant<'_> {
     fn clone(&self) -> Self {
         match self {
-            Self::Bool(arg0) => Self::Bool(arg0.clone()),
+            Self::Bool(arg0) => Self::Bool(*arg0),
             Self::TextArea(arg0) => {
                 Self::TextArea(Arc::new(Mutex::new(arg0.lock().unwrap().clone())))
             }
@@ -326,7 +326,7 @@ impl_get_type!(Tree<'_>, Args<'_> => Type::Struct);
 
 impl_from_for_value!(bool => ValueVariant::Bool(v); v);
 impl_from_for_value!(u8, i8, u16, i16, u32, i32, u64, i64, f32, f64, usize, isize, String, &str, char
-        => TextArea::new(vec![v.to_string()]).into(); v);
+        => TextArea::new(vec![v].iter().map(ToString::to_string).collect()).into(); v);
 impl_from_for_value!(Tree<'a>, Args<'a>, => ValueVariant::Struct(v.into()); v);
 
 impl<T: GetType + Default> From<Vec<T>> for Value<'_>
