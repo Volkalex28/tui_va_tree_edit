@@ -28,9 +28,9 @@ impl DrawerRef for Tree<'_> {
         area: tui::layout::Rect,
         buf: &mut tui::buffer::Buffer,
         state: (&State, &mut usize),
-    ) {
+    ) -> u16 {
         if self.branches.is_empty() || *state.1 > state.0.position.len() {
-            return;
+            return 0;
         }
         let items = {
             self.branches
@@ -38,15 +38,11 @@ impl DrawerRef for Tree<'_> {
                 .map(|(name, _)| name)
                 .collect::<Vec<&String>>()
         };
-        let constrains = vec![
-            Constraint::Length(
-                items
-                    .iter()
-                    .map(|span| span.len() as u16)
-                    .fold(0, |max, width| max.max(width + 5)),
-            ),
-            Constraint::Min(3),
-        ];
+        let width = items
+            .iter()
+            .map(|span| span.len() as u16)
+            .fold(0, |max, width| max.max(width + 5));
+        let constrains = vec![Constraint::Length(width), Constraint::Min(3)];
         let mut list_state = ListState::default();
 
         let current =
@@ -93,8 +89,9 @@ impl DrawerRef for Tree<'_> {
         if let Some(index) = current {
             *state.1 += 1;
             if let Some((_, branch)) = self.branches.iter().nth(index) {
-                branch.render(chunks[1], buf, state)
+                return chunks[0].width + branch.render(chunks[1], buf, state);
             }
         };
+        chunks[0].width
     }
 }

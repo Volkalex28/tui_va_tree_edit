@@ -1,7 +1,10 @@
 use crate::{argument::value::ValueVariant, state::State, widget::DrawerRef, Args};
 use std::{
     ops::Deref,
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc, Mutex,
+    },
 };
 use tui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -14,16 +17,16 @@ use tui_textarea::TextArea;
 type DState<'s, 'u> = (&'s State, &'u mut usize);
 
 struct ToRenderImpl<'c, 's, 'r, 'a, 'u> {
-    current: &'c Option<(usize, usize)>,
+    current: &'c Option<(usize, usize, Arc<AtomicUsize>)>,
     state: &'s DState<'r, 'u>,
     col_index: usize,
     values: Option<Vec<(String, Text<'a>)>>,
 }
 impl<'c, 's, 'r, 'a, 'u> ToRenderImpl<'c, 's, 'r, 'a, 'u> {
     fn highlight_style(&self, index: usize) -> Option<Style> {
-        self.current.and_then(|(row, col)| {
-            ((index == row && self.col_index == col
-                || (index == 0 && self.col_index == col || index == row && self.col_index == 0)
+        self.current.as_ref().and_then(|(row, col, _)| {
+            ((index == *row && self.col_index == *col
+                || (index == 0 && self.col_index == *col || index == *row && self.col_index == 0)
                     && *self.state.1 + 1 == self.state.0.position.len())
                 && self.state.0.input.is_none())
             .then_some(self.state.0.highlight_style)
@@ -35,8 +38,8 @@ impl<'c, 's, 'r, 'a, 'u> ToRenderImpl<'c, 's, 'r, 'a, 'u> {
         (block, text): (String, Arc<Mutex<TextArea<'a>>>),
     ) -> ToRender<'a> {
         let mut _text = text.lock().unwrap();
-        let cursor_style = self.current.map_or(false, |(row, col)| {
-            row == index && col == self.col_index && self.state.0.input.is_some()
+        let cursor_style = self.current.as_ref().map_or(false, |(row, col, _)| {
+            *row == index && *col == self.col_index && self.state.0.input.is_some()
         });
         _text.set_block(
             Block::default()
@@ -62,10 +65,10 @@ impl<'c, 's, 'r, 'a, 'u> ToRenderImpl<'c, 's, 'r, 'a, 'u> {
         ToRender::Text(text)
     }
     fn spans(&self, index: usize, span: Span<'a>) -> Spans<'a> {
-        if let Some(style) = self.current.and_then(|(row, col)| {
-            ((index == 0 && self.col_index == col && self.state.0.input.is_none()
-                || self.col_index == 0 && index == row && self.state.0.input.is_none()
-                || (row == index && col == self.col_index && self.state.0.input.is_some()))
+        if let Some(style) = self.current.as_ref().and_then(|(row, col, _)| {
+            ((index == 0 && self.col_index == *col && self.state.0.input.is_none()
+                || self.col_index == 0 && index == *row && self.state.0.input.is_none()
+                || (*row == index && *col == self.col_index && self.state.0.input.is_some()))
                 && *self.state.1 + 1 == self.state.0.position.len())
             .then_some(self.state.0.highlight_style)
         }) {
@@ -116,7 +119,7 @@ enum ToRender<'b> {
 impl<'c, 's, 'r, 'a, 'u> From<ToRenderImpl<'c, 's, 'r, 'a, 'u>> for Vec<ToRender<'a>> {
     #[inline]
     fn from(mut to_render: ToRenderImpl<'c, 's, 'r, 'a, 'u>) -> Self {
-        to_render
+        let mut iter = to_render
             .values
             .take()
             .unwrap()
@@ -125,7 +128,14 @@ impl<'c, 's, 'r, 'a, 'u> From<ToRenderImpl<'c, 's, 'r, 'a, 'u>> for Vec<ToRender
             .map(|(index, (block, span))| match span {
                 Text::Text(text) => to_render.text(index, (block, text)),
                 Text::Span(span) => to_render.span(index, (block, span)),
-            })
+            });
+        let skip = to_render
+            .current
+            .as_ref()
+            .map_or(0, |(_, _, off)| off.load(Ordering::Relaxed));
+        iter.next()
+            .into_iter()
+            .chain(iter.skip(skip))
             .collect::<Vec<ToRender<'a>>>()
     }
 }
@@ -138,13 +148,12 @@ enum Text<'b> {
 pub struct Drawer<'r, 'a>(pub(super) &'r Args<'a>);
 
 impl<'r, 'a> Drawer<'r, 'a> {
-    fn current(&self, state: &DState) -> Option<(usize, usize)> {
+    fn current(&self, state: &DState) -> Option<(usize, usize, Arc<AtomicUsize>)> {
         state.0.node(*state.1).and_then(|current| {
-            current.as_args().and_then(|(current, col)| {
-                self.names
-                    .iter()
-                    .enumerate()
-                    .find_map(|(number, text)| (*text == *current).then_some((number + 1, col + 1)))
+            current.as_args().and_then(|(current, col, offset)| {
+                self.names.iter().enumerate().find_map(|(number, text)| {
+                    (*text == *current).then_some((number + 1, col + 1, offset.clone()))
+                })
             })
         })
     }
@@ -262,12 +271,20 @@ impl<'r> DrawerRef for Drawer<'r, '_> {
         area: tui::layout::Rect,
         buf: &mut tui::buffer::Buffer,
         state: DState<'_, '_>,
-    ) {
+    ) -> u16 {
         if *state.1 > state.0.position.len() {
-            return;
+            return 0;
         }
-
+        let max_rows = area.height.saturating_sub(1) as usize / 2;
         let current = self.current(&state);
+        if let Some((row, _, c_offset)) = current.as_ref() {
+            let offset = c_offset.load(Ordering::Relaxed);
+            if *row > max_rows + offset {
+                c_offset.fetch_add(1, Ordering::Relaxed);
+            } else if *row <= offset {
+                c_offset.fetch_sub(1, Ordering::Relaxed);
+            }
+        }
         let chunks = {
             let values = self.values();
             let names = self.names();
@@ -297,7 +314,7 @@ impl<'r> DrawerRef for Drawer<'r, '_> {
             chunks
         };
 
-        if let Some(branch) = current.and_then(|(name, col)| {
+        if let Some(branch) = current.and_then(|(name, col, _)| {
             self.get_value_by_indexes(name - 1, col - 1)
                 .and_then(|value| match &value.1 {
                     ValueVariant::Struct(b) => Some(b),
@@ -305,7 +322,9 @@ impl<'r> DrawerRef for Drawer<'r, '_> {
                 })
         }) {
             *state.1 += 1;
-            branch.render(chunks[1], buf, state)
+            chunks[0].width + branch.render(chunks[1], buf, state)
+        } else {
+            chunks[0].width
         }
     }
 }

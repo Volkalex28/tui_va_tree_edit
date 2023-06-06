@@ -1,4 +1,7 @@
-use std::fmt::Debug;
+use std::{
+    fmt::Debug,
+    sync::{atomic::AtomicUsize, Arc},
+};
 
 use crate::{array::Array, Branch, Value};
 use tui::style::Style;
@@ -6,17 +9,21 @@ use tui::style::Style;
 type BranchItem<'a, 'b> = (&'b String, &'b Branch<'a>);
 type BranchItemMut<'a, 'b> = (&'b String, &'b mut Branch<'a>);
 
-#[derive(Clone, Debug)]
+#[derive(Debug, Clone)]
 pub enum Node {
     Tree(String),
-    Args(String, usize),
+    Args {
+        name: String,
+        column: usize,
+        offset: Arc<AtomicUsize>,
+    },
 }
 impl Node {
     pub fn is_tree(&self) -> bool {
         matches!(self, Self::Tree(_))
     }
     pub fn is_args(&self) -> bool {
-        matches!(self, Self::Args(_, _))
+        matches!(self, Self::Args { .. })
     }
 
     pub fn as_tree(&self) -> Option<&String> {
@@ -26,9 +33,14 @@ impl Node {
             None
         }
     }
-    pub fn as_args(&self) -> Option<(&String, &usize)> {
-        if let Self::Args(name, col) = self {
-            Some((name, col))
+    pub fn as_args(&self) -> Option<(&String, &usize, Arc<AtomicUsize>)> {
+        if let Self::Args {
+            name,
+            column,
+            offset,
+        } = self
+        {
+            Some((name, column, offset.clone()))
         } else {
             None
         }
@@ -36,31 +48,31 @@ impl Node {
 
     pub fn text(&self) -> &String {
         self.as_tree()
-            .or_else(|| self.as_args().map(|(text, _)| text))
+            .or_else(|| self.as_args().map(|(text, _, _)| text))
             .unwrap()
     }
     pub fn text_mut(&mut self) -> &mut String {
         match self {
-            Node::Tree(t) | Node::Args(t, _) => t,
+            Node::Tree(t) | Node::Args { name: t, .. } => t,
         }
     }
     fn change_text(&mut self, text: String) {
         *match self {
             Node::Tree(tree) => tree,
-            Node::Args(args, _) => args,
+            Node::Args { name: args, .. } => args,
         } = text
     }
     fn inc_index(&mut self, max: usize) {
-        if let Self::Args(_, col) = self {
-            *col = max.min(*col + 1);
+        if let Self::Args { column, .. } = self {
+            *column = max.min(*column + 1);
         }
     }
     fn dec_index(&mut self) -> bool {
-        if let Self::Args(_, col) = self {
-            if *col == 0 {
+        if let Self::Args { column, .. } = self {
+            if *column == 0 {
                 return true;
             } else {
-                *col -= 1;
+                *column -= 1;
             }
         }
 
@@ -70,14 +82,15 @@ impl Node {
 impl From<&Branch<'_>> for Node {
     fn from(branch: &Branch) -> Self {
         match branch {
-            Branch::Args(_) => Self::Args(
-                branch
+            Branch::Args(_) => Self::Args {
+                name: branch
                     .get_list()
                     .first()
                     .unwrap_or(&String::default())
                     .clone(),
-                0,
-            ),
+                column: 0,
+                offset: Arc::new(AtomicUsize::new(0)),
+            },
             Branch::Tree(_) | Branch::Array(_) => Self::Tree(
                 branch
                     .get_list()
@@ -185,7 +198,7 @@ impl State {
                     .nth_back(offset)
                     .and_then(|node| node.as_args()),
             )
-            .and_then(|(args, (name, column))| args.get_value_by_cindex_mut(name, *column))
+            .and_then(|(args, (name, column, _))| args.get_value_by_cindex_mut(name, *column))
     }
     #[inline]
     fn current_value<'a, 'b>(
@@ -204,7 +217,7 @@ impl State {
                 Branch::Args(args) => args
                     .get_value_by_cindex_mut(
                         node.text(),
-                        node.as_args().map_or(usize::MAX, |(_, index)| *index),
+                        node.as_args().map_or(usize::MAX, |(_, index, _)| *index),
                     )
                     .and_then(|value| value.as_struct_mut()),
                 Branch::Tree(tree) | Branch::Array(Array { tree, .. }) => {
@@ -245,7 +258,7 @@ impl State {
                         .position
                         .last()
                         .and_then(|node| node.as_args())
-                        .and_then(|(_, index)| (*index > 0).then_some(()))
+                        .and_then(|(_, index, _)| (*index > 0).then_some(()))
                         .is_some())
                     && self
                         .current_branch(tabs)
@@ -333,7 +346,7 @@ impl State {
                             .then(|| {
                                 self.position
                                     .last()
-                                    .and_then(|node| node.as_args().map(|(_, index)| *index))
+                                    .and_then(|node| node.as_args().map(|(_, index, _)| *index))
                             })
                             .flatten();
                         args.get_value_by_indexes(name, index.unwrap_or(0))

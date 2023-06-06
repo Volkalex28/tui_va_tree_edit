@@ -45,7 +45,7 @@ macro_rules! branch {
                     area: tui::layout::Rect,
                     buf: &mut tui::buffer::Buffer,
                     state: (&State, &mut usize),
-                ) {
+                ) -> u16 {
                     match self {$(
                         Self:: [< $name:camel >] ($name) => $name .render(area, buf, state),
                     )+}

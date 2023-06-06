@@ -104,7 +104,7 @@ impl DrawerRef for Args<'_> {
         area: tui::layout::Rect,
         buf: &mut tui::buffer::Buffer,
         state: (&State, &mut usize),
-    ) {
+    ) -> u16 {
         drawer::Drawer(self).render(area, buf, state)
     }
 }
